@@ -615,28 +615,56 @@ function recomputeBloomDates() {
 }
 
 function subscribeRealtime() {
-  if (realtimeChan) sb.removeChannel(realtimeChan);
-  realtimeChan = sb.channel('tasks-' + session.user.id)
+  if (realtimeChan) { sb.removeChannel(realtimeChan); realtimeChan = null; }
+  // Ensure realtime client is using the current auth token (RLS-aware delivery)
+  try { sb.realtime.setAuth(session.access_token); } catch {}
+
+  realtimeChan = sb.channel('tasks_' + session.user.id.replace(/-/g, ''))
     .on('postgres_changes',
         { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${session.user.id}` },
         payload => {
           const { eventType, new: nu, old: ol } = payload;
-          if (eventType === 'INSERT' || eventType === 'UPDATE') {
-            // remove old (in case date changed) then re-add
-            if (ol && ol.id) removeFromState(ol.id, ol.date);
+          if (eventType === 'INSERT') {
+            hydrateRow(nu);
+          } else if (eventType === 'UPDATE') {
+            // If date changed, remove from old day first
+            if (ol?.date && nu?.date && ol.date !== nu.date) removeFromState(ol.id, ol.date);
             hydrateRow(nu);
           } else if (eventType === 'DELETE') {
-            removeFromState(ol.id, ol.date);
+            removeFromState(ol?.id, ol?.date);
           }
           recomputeBloomDates(); recomputeStreak(); renderAll();
         })
-    .subscribe();
+    .subscribe(status => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        // brief backoff retry
+        setTimeout(() => { if (session) subscribeRealtime(); }, 2000);
+      }
+    });
 }
+// Defensive: if `date` is missing (e.g. older payloads without REPLICA IDENTITY FULL),
+// scan every day so deletes never silently fail.
 function removeFromState(id, date) {
-  const day = state.days[date];
-  if (!day) return;
-  day.tasks = day.tasks.filter(t => t.id !== id);
+  if (!id) return;
+  if (date && state.days[date]) {
+    state.days[date].tasks = state.days[date].tasks.filter(t => t.id !== id);
+    return;
+  }
+  for (const d in state.days) {
+    state.days[d].tasks = state.days[d].tasks.filter(t => t.id !== id);
+  }
 }
+
+// Refresh from cloud when the tab regains focus or comes back online —
+// a safety net in case realtime briefly drops.
+function fullResync() {
+  if (session) loadFromCloud();
+}
+window.addEventListener('focus',  fullResync);
+window.addEventListener('online', fullResync);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') fullResync();
+});
 
 /* ------------------------ Date helpers ------------------------ */
 function todayStr() {

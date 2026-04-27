@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v7 · cloud sync</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v8 · cloud sync</p>
   </footer>
 
 </main>
@@ -509,18 +509,17 @@
    ============================================================ */
 const SUPABASE_URL = 'https://mjxknzuftjejxrdhqnxw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_27rC2Jb4RhM0HpLciDOxsQ_C2AeY7BR';
-// Defining a no-op lock as a named function so supabase-js's internal
-// `lock.constructor.name` checks (if any) don't take a weird code path,
-// and so we can spot it in stack traces.
-async function bloomlistLock(_name, _timeoutMs, fn) {
-  return await fn();
-}
+// No-op cross-tab lock — we serialize our own auth-touching ops, so we
+// don't need supabase-js's navigator.locks coordination (which deadlocks
+// our concurrent poll + realtime + refresh).
+async function bloomlistLock(_name, _timeoutMs, fn) { return fn(); }
+
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: false,  // we're not using OAuth/magic-link redirects
-    storageKey: 'sb-bloomlist-auth',  // unique key, avoid collisions with stale tokens
+    autoRefreshToken: false,    // we don't need 1h+ sessions, and this is the worst cross-tab fighter
+    detectSessionInUrl: false,  // not using OAuth / magic links
+    storageKey: 'sb-bloomlist-auth',
     lock: bloomlistLock,
   },
 });

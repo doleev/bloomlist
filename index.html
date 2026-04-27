@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BloomList — grow something lovely</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['Fredoka', 'system-ui', 'sans-serif'],
+          body: ['Nunito', 'system-ui', 'sans-serif'],
+        },
+        colors: {
+          blush: {
+            50:  '#FFF5F8',
+            100: '#FFE4EC',
+            200: '#FFC8D9',
+            300: '#FFA3BE',
+            400: '#FF7AA2',
+            500: '#FF5C8A',
+            600: '#EC4080',
+            700: '#C32A6B',
+            800: '#8E1F50',
+            900: '#5C1336',
+          },
+        },
+        keyframes: {
+          float:    { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-8px)' } },
+          sway:     { '0%,100%': { transform: 'rotate(-2deg)' }, '50%': { transform: 'rotate(2deg)' } },
+          pop:      { '0%': { transform: 'scale(0.6)', opacity: 0 }, '60%': { transform: 'scale(1.15)' }, '100%': { transform: 'scale(1)', opacity: 1 } },
+          wiggle:   { '0%,100%': { transform: 'rotate(0)' }, '25%': { transform: 'rotate(-8deg)' }, '75%': { transform: 'rotate(8deg)' } },
+          shimmer:  { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
+          breathe:  { '0%,100%': { transform: 'scale(1)' }, '50%': { transform: 'scale(1.04)' } },
+          twinkle:  { '0%,100%': { opacity: 0.5, transform: 'scale(1)' }, '50%': { opacity: 1, transform: 'scale(1.3)' } },
+          spin360:  { 'to': { transform: 'rotate(360deg)' } },
+        },
+        animation: {
+          float:   'float 4s ease-in-out infinite',
+          sway:    'sway 5s ease-in-out infinite',
+          pop:     'pop 0.5s cubic-bezier(.34,1.56,.64,1) both',
+          wiggle:  'wiggle 0.4s ease-in-out',
+          shimmer: 'shimmer 2.5s linear infinite',
+          breathe: 'breathe 3s ease-in-out infinite',
+          twinkle: 'twinkle 2.5s ease-in-out infinite',
+          spinslow:'spin360 12s linear infinite',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  :root {
+    --grad-bg: radial-gradient(1200px 800px at 10% 0%, #FFE4EC 0%, transparent 60%),
+               radial-gradient(900px 700px at 100% 30%, #FFF1E6 0%, transparent 55%),
+               radial-gradient(700px 600px at 50% 100%, #FCE7FF 0%, transparent 60%),
+               linear-gradient(180deg, #FFF7FA 0%, #FFF0F5 100%);
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Nunito', system-ui, sans-serif;
+    background: var(--grad-bg);
+    color: #5C1336;
+    overflow-x: hidden;
+  }
+  .display { font-family: 'Fredoka', system-ui, sans-serif; letter-spacing: -0.01em; }
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 200, 217, 0.6);
+  }
+  .card-shadow { box-shadow: 0 20px 60px -20px rgba(236, 64, 128, 0.25), 0 6px 20px -6px rgba(236, 64, 128, 0.15); }
+  .pop-btn {
+    background: linear-gradient(180deg, #FF7AA2 0%, #EC4080 100%);
+    box-shadow: 0 6px 0 0 #C32A6B, 0 12px 24px -8px rgba(236,64,128,0.5);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .pop-btn:hover { transform: translateY(-1px); box-shadow: 0 7px 0 0 #C32A6B, 0 14px 28px -8px rgba(236,64,128,0.55); }
+  .pop-btn:active { transform: translateY(4px); box-shadow: 0 2px 0 0 #C32A6B, 0 6px 14px -6px rgba(236,64,128,0.45); }
+
+  .heart-check {
+    width: 32px; height: 32px;
+    border-radius: 999px;
+    border: 2px solid #FFA3BE;
+    background: white;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all 180ms ease;
+    flex-shrink: 0;
+  }
+  .heart-check:hover { border-color: #EC4080; transform: scale(1.08); background: #FFF5F8; }
+  .heart-check.checked {
+    background: linear-gradient(135deg, #FF7AA2, #EC4080);
+    border-color: #EC4080;
+    box-shadow: 0 0 0 6px rgba(255, 122, 162, 0.18);
+  }
+  .heart-check svg { width: 16px; height: 16px; color: white; opacity: 0; transition: opacity 150ms; }
+  .heart-check.checked svg { opacity: 1; }
+
+  .task-row { transition: all 250ms ease; }
+  .task-row.done .task-text { color: #C8A2B8; text-decoration: line-through; text-decoration-color: rgba(236,64,128,0.5); text-decoration-thickness: 2px; }
+
+  .sparkle { position: absolute; pointer-events: none; will-change: transform, opacity; }
+  .progress-fill {
+    background: linear-gradient(90deg, #FF7AA2 0%, #EC4080 50%, #FF7AA2 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2.5s linear infinite;
+  }
+  .toast { animation: pop 0.4s cubic-bezier(.34,1.56,.64,1) both; }
+  #fx { position: fixed; inset: 0; pointer-events: none; z-index: 100; overflow: hidden; }
+
+  .pretty-input {
+    background: white; border: 2px solid #FFC8D9; border-radius: 16px;
+    padding: 14px 18px; font-size: 16px; color: #5C1336;
+    transition: all 180ms ease; width: 100%; font-family: 'Nunito', sans-serif;
+  }
+  .pretty-input::placeholder { color: #FFA3BE; }
+  .pretty-input:focus { outline: none; border-color: #EC4080; box-shadow: 0 0 0 4px rgba(255, 122, 162, 0.25); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700;
+    background: white; border: 1.5px solid #FFC8D9; color: #C32A6B;
+    cursor: pointer; transition: all 180ms ease;
+  }
+  .pill:hover { border-color: #FF7AA2; }
+  .pill.active {
+    background: linear-gradient(135deg, #FF7AA2, #EC4080);
+    color: white; border-color: transparent;
+    box-shadow: 0 6px 14px -4px rgba(236,64,128,0.4);
+  }
+
+  /* Category tabs */
+  .cat-tabs {
+    display: inline-flex;
+    background: #FFE4EC;
+    padding: 5px;
+    border-radius: 18px;
+    gap: 4px;
+  }
+  .cat-tab {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px;
+    border-radius: 14px;
+    font-family: 'Fredoka', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: #C32A6B;
+    cursor: pointer;
+    transition: all 200ms ease;
+    border: none;
+    background: transparent;
+  }
+  .cat-tab:hover { color: #8E1F50; }
+  .cat-tab.active {
+    background: white;
+    color: #5C1336;
+    box-shadow: 0 4px 14px -4px rgba(236,64,128,0.3);
+  }
+  .cat-tab .count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 22px; height: 20px; padding: 0 6px;
+    border-radius: 999px;
+    background: #FFC8D9; color: #8E1F50;
+    font-size: 11px; font-weight: 800;
+  }
+  .cat-tab.active .count { background: linear-gradient(135deg, #FF7AA2, #EC4080); color: white; }
+
+  /* Calendar day chip */
+  .day-chip {
+    flex-shrink: 0;
+    width: 64px;
+    border-radius: 22px;
+    background: white;
+    border: 2px solid #FFE4EC;
+    padding: 10px 6px 8px;
+    cursor: pointer;
+    transition: all 200ms ease;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    position: relative;
+  }
+  .day-chip:hover { transform: translateY(-3px); border-color: #FFA3BE; box-shadow: 0 8px 20px -8px rgba(236,64,128,0.3); }
+  .day-chip.selected {
+    background: linear-gradient(160deg, #FF7AA2, #EC4080);
+    border-color: transparent;
+    box-shadow: 0 10px 24px -8px rgba(236,64,128,0.5);
+    transform: translateY(-2px);
+  }
+  .day-chip.selected .dow, .day-chip.selected .dom { color: white; }
+  .day-chip.today::before {
+    content: ''; position: absolute; top: 6px; right: 8px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #FFD66B; box-shadow: 0 0 0 2px white;
+  }
+  .day-chip .dow { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #C32A6B; }
+  .day-chip .dom { font-family: 'Fredoka', sans-serif; font-size: 18px; font-weight: 700; color: #5C1336; line-height: 1; }
+  .day-chip .mini-flower { width: 26px; height: 26px; }
+
+  /* Month grid */
+  .month-cell {
+    aspect-ratio: 1 / 1;
+    background: white;
+    border: 2px solid #FFE4EC;
+    border-radius: 14px;
+    padding: 4px 2px;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    cursor: pointer;
+    transition: all 180ms ease;
+    position: relative;
+    min-height: 52px;
+  }
+  .month-cell:hover { border-color: #FFA3BE; transform: translateY(-2px); box-shadow: 0 6px 14px -6px rgba(236,64,128,0.3); }
+  .month-cell .day-num { font-family: 'Fredoka', sans-serif; font-size: 13px; font-weight: 700; color: #5C1336; line-height: 1; }
+  .month-cell .mini { width: 22px; height: 22px; }
+  .month-cell.bloomed { background: linear-gradient(160deg, #FFF5F8, #FFE4EC); border-color: #FFC8D9; }
+  .month-cell.today { border-color: #FFD66B; }
+  .month-cell.today::before {
+    content: ''; position: absolute; top: 4px; right: 5px;
+    width: 5px; height: 5px; border-radius: 50%; background: #FFD66B;
+    box-shadow: 0 0 0 1.5px white;
+  }
+  .month-cell.selected {
+    background: linear-gradient(160deg, #FF7AA2, #EC4080);
+    border-color: transparent;
+    box-shadow: 0 8px 20px -6px rgba(236,64,128,0.5);
+  }
+  .month-cell.selected .day-num { color: white; }
+  .month-cell.other-month { opacity: 0.35; }
+
+  /* Interactive flower */
+  #plantSvg {
+    transition: transform 250ms cubic-bezier(.2,.8,.2,1);
+    cursor: pointer;
+    will-change: transform;
+  }
+  .plant-wrap { cursor: pointer; }
+  .plant-wrap:active #plantSvg { transition: transform 80ms ease-out; }
+
+  /* Glow when fully bloomed */
+  .full-bloom-glow {
+    position: absolute; inset: -20%;
+    background: radial-gradient(circle, rgba(255,214,107,0.5) 0%, transparent 60%);
+    border-radius: 50%;
+    animation: breathe 3s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #FFC8D9; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #FF7AA2; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  .blob {
+    position: fixed; border-radius: 50%; filter: blur(60px);
+    opacity: 0.5; pointer-events: none; z-index: 0;
+  }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="blob animate-float" style="width: 320px; height: 320px; background: #FFC8D9; top: -80px; right: -60px;"></div>
+<div class="blob animate-float" style="width: 260px; height: 260px; background: #FCE7FF; bottom: -60px; left: -40px; animation-delay: -2s;"></div>
+<div class="blob animate-float" style="width: 200px; height: 200px; background: #FFE4EC; top: 40%; left: 60%; animation-delay: -1s;"></div>
+
+<div id="fx"></div>
+
+<main class="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 py-8 sm:py-12">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-6 flex-wrap gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blush-300 to-blush-600 flex items-center justify-center card-shadow animate-breathe" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="w-7 h-7 text-white">
+          <path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="display text-3xl sm:text-4xl font-bold text-blush-700 leading-none">BloomList</h1>
+        <p class="text-sm text-blush-500 font-medium">grow something lovely 🌷</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="glass card-shadow rounded-2xl px-4 py-2.5 flex items-center gap-2" title="Daily streak (full bloom days in a row)">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-blush-600"><path d="M13 2c.5 4.5-3 6-3 9a3 3 0 006 0c0-1 .5-2 .5-2s2 2 2 5a7 7 0 11-14 0c0-5 6-7 6-12 1.5 0 2.5 0 2.5 0z"/></svg>
+        <span class="display font-semibold text-blush-700"><span id="streak">0</span> day streak</span>
+      </div>
+      <div class="glass card-shadow rounded-2xl px-4 py-2.5 flex items-center gap-2" title="Total flowers bloomed">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-blush-600"><path d="M12 2l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 2z"/></svg>
+        <span class="display font-semibold text-blush-700"><span id="bloomCount">0</span> blooms</span>
+      </div>
+      <button id="muteBtn" aria-label="Toggle sound" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors">
+        <svg id="soundOn" viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600">
+          <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor"/>
+          <path d="M15.5 8.5a5 5 0 010 7M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <svg id="soundOff" viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600 hidden">
+          <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor"/>
+          <path d="M22 9l-6 6M16 9l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Calendar -->
+  <section class="glass card-shadow rounded-3xl p-4 sm:p-5 mb-6">
+    <div class="flex items-center justify-between mb-3 px-1 gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <button id="prevPeriod" aria-label="Previous" class="cursor-pointer w-9 h-9 rounded-full bg-white hover:bg-blush-100 border-2 border-blush-200 hover:border-blush-400 flex items-center justify-center text-blush-700 transition-all">
+          <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+        <button id="nextPeriod" aria-label="Next" class="cursor-pointer w-9 h-9 rounded-full bg-white hover:bg-blush-100 border-2 border-blush-200 hover:border-blush-400 flex items-center justify-center text-blush-700 transition-all">
+          <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <h2 id="monthLabel" class="display text-xl font-bold text-blush-700 flex-1 text-center order-3 w-full sm:w-auto sm:order-none">April 2026</h2>
+      <div class="cat-tabs">
+        <button class="cat-tab active" data-view="week">
+          <svg viewBox="0 0 24 24" fill="none" class="w-3.5 h-3.5"><path d="M3 12h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+          Week
+        </button>
+        <button class="cat-tab" data-view="month">
+          <svg viewBox="0 0 24 24" fill="none" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 2v4M16 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Month
+        </button>
+      </div>
+    </div>
+
+    <div id="weekStrip" class="flex gap-2 sm:gap-3 overflow-x-auto pb-2 px-1 justify-between sm:justify-center"></div>
+
+    <div id="monthHeader" class="hidden grid-cols-7 gap-1.5 sm:gap-2 mb-1.5 px-1"></div>
+    <div id="monthGrid" class="hidden grid-cols-7 gap-1.5 sm:gap-2 px-1"></div>
+
+    <div class="flex items-center justify-between mt-3 px-1">
+      <button id="todayBtn" class="text-xs font-bold text-blush-600 hover:text-blush-800 underline decoration-dotted underline-offset-4 cursor-pointer transition-colors">jump to today</button>
+      <p class="text-xs text-blush-500 font-medium hidden sm:block">click a day to plan or peek · pet your flower 🌸</p>
+    </div>
+  </section>
+
+  <!-- Hero grid: plant + tasks -->
+  <section class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+    <!-- Plant card -->
+    <div class="lg:col-span-2 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col items-center text-center relative overflow-hidden">
+      <div class="absolute inset-0 opacity-50 pointer-events-none" style="background: radial-gradient(circle at 50% 30%, #FFE4EC 0%, transparent 60%);"></div>
+
+      <p class="text-xs font-bold uppercase tracking-widest text-blush-500 relative z-10">Today's flower</p>
+      <h2 id="dayTitle" class="display text-2xl font-bold text-blush-700 mt-1 relative z-10">Sunday, April 26</h2>
+      <p id="stageLabel" class="text-sm text-blush-500 font-medium relative z-10 mt-1">a tiny seed, full of hope</p>
+
+      <!-- Plant SVG -->
+      <div id="plantWrap" class="plant-wrap relative w-full max-w-[300px] aspect-square my-4 animate-float" title="click to pet your flower">
+        <div id="bloomGlow" class="full-bloom-glow hidden"></div>
+        <svg id="plantSvg" viewBox="0 0 200 200" class="w-full h-full relative z-10" aria-label="Today's flower — click to interact"></svg>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="w-full max-w-xs relative z-10">
+        <div class="flex justify-between text-xs font-bold text-blush-600 mb-1.5">
+          <span><span id="dayDone">0</span> of <span id="dayTotal">0</span> done</span>
+          <span><span id="dayPct">0</span>%</span>
+        </div>
+        <div class="w-full h-3 bg-blush-100 rounded-full overflow-hidden">
+          <div id="progressFill" class="progress-fill h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <p id="growHint" class="text-xs text-blush-500 mt-2 font-medium">add a task to start growing 🌱</p>
+      </div>
+    </div>
+
+    <!-- Tasks card -->
+    <div class="lg:col-span-3 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col">
+
+      <!-- Category tabs -->
+      <div class="cat-tabs mb-4 self-start">
+        <button class="cat-tab active" data-cat="todo">
+          <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z" fill="currentColor"/></svg>
+          To-Do
+          <span class="count" id="catCountTodo">0</span>
+        </button>
+        <button class="cat-tab" data-cat="school">
+          <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M12 3L2 8l10 5 10-5-10-5zM6 10v6c0 1 3 3 6 3s6-2 6-3v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          School
+          <span class="count" id="catCountSchool">0</span>
+        </button>
+      </div>
+
+      <form id="addForm" class="flex gap-2 sm:gap-3">
+        <input id="taskInput" type="text" maxlength="120" class="pretty-input" placeholder="what's on your heart for this day, love?" aria-label="New task" autocomplete="off" />
+        <button type="submit" class="pop-btn display text-white font-semibold rounded-2xl px-5 sm:px-6 py-3 cursor-pointer flex items-center gap-2" aria-label="Add task">
+          <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+          <span class="hidden sm:inline">Plant it</span>
+        </button>
+      </form>
+
+      <div class="flex items-center gap-2 mt-5 flex-wrap">
+        <button class="pill active" data-filter="all">All <span id="countAll" class="opacity-70 ml-1">0</span></button>
+        <button class="pill" data-filter="active">In bloom <span id="countActive" class="opacity-70 ml-1">0</span></button>
+        <button class="pill" data-filter="done">Done <span id="countDone" class="opacity-70 ml-1">0</span></button>
+        <div class="flex-1"></div>
+        <button id="copyYesterday" class="pill" title="Copy unfinished tasks from yesterday">
+          <svg viewBox="0 0 24 24" fill="none" class="w-3.5 h-3.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          copy yesterday
+        </button>
+        <button id="clearDone" class="pill" title="Clear completed">
+          <svg viewBox="0 0 24 24" fill="none" class="w-3.5 h-3.5"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          clear done
+        </button>
+      </div>
+
+      <ul id="taskList" class="mt-5 flex-1 space-y-2.5 min-h-[200px] max-h-[460px] overflow-y-auto pr-1"></ul>
+
+      <div id="emptyState" class="hidden flex-col items-center justify-center text-center py-12 text-blush-500">
+        <div class="w-20 h-20 rounded-full bg-blush-100 flex items-center justify-center mb-3 animate-breathe">
+          <svg viewBox="0 0 24 24" fill="currentColor" class="w-10 h-10 text-blush-400">
+            <path d="M12 2C9 6 6 8 6 12a6 6 0 0012 0c0-4-3-6-6-10z"/>
+          </svg>
+        </div>
+        <p class="display text-lg font-semibold text-blush-700" id="emptyTitle">no tasks yet 🌸</p>
+        <p class="text-sm" id="emptyBody">add one above to plant a seed for this day</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Garden -->
+  <section class="mt-6 glass card-shadow rounded-3xl p-6 sm:p-8">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <h3 class="display text-2xl font-bold text-blush-700">Your Garden</h3>
+        <p class="text-sm text-blush-500">every day you bloom, a flower stays here forever 💕</p>
+      </div>
+      <span class="pill"><span id="gardenCount">0</span> flowers grown</span>
+    </div>
+    <div id="garden" class="grid grid-cols-7 sm:grid-cols-10 md:grid-cols-14 gap-2"></div>
+  </section>
+
+  <footer class="text-center mt-8 mb-4">
+    <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
+  </footer>
+
+</main>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] hidden">
+  <div class="toast glass card-shadow rounded-2xl px-5 py-3 flex items-center gap-3 border-2 border-blush-200">
+    <div class="w-9 h-9 rounded-full bg-gradient-to-br from-blush-300 to-blush-600 flex items-center justify-center text-white">
+      <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div>
+      <div id="toastTitle" class="display font-semibold text-blush-700 text-sm">Bloomed!</div>
+      <div id="toastMsg" class="text-xs text-blush-500"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   BloomList — daily flowers
+   ============================================================ */
+
+const KEY = 'bloomlist:v2';
+let state = load();
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s.version === 2) return s;
+    }
+  } catch {}
+  return {
+    version: 2,
+    days: {},          // 'YYYY-MM-DD' -> { tasks: [{id,text,done,doneAt}] }
+    bloomDates: [],    // sorted unique dates that ever hit 100%
+    selectedDate: todayStr(),
+    weekAnchor: todayStr(),
+    streak: 0,
+    bestStreak: 0,
+    muted: false,
+    filter: 'all',
+    category: 'todo',  // 'todo' | 'school'
+    calView: 'week',   // 'week' | 'month'
+  };
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+/* ------------------------ Date helpers ------------------------ */
+function todayStr() {
+  const d = new Date(); d.setHours(0,0,0,0);
+  return ymd(d);
+}
+function ymd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+function parseDate(s) {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function addDays(s, n) {
+  const d = parseDate(s);
+  d.setDate(d.getDate() + n);
+  return ymd(d);
+}
+function formatDayTitle(s) {
+  const d = parseDate(s);
+  const dow = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+  const mon = ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()];
+  return `${dow}, ${mon} ${d.getDate()}`;
+}
+function startOfWeek(s) {
+  // Monday start
+  const d = parseDate(s);
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  return ymd(d);
+}
+function monthLabelOf(s) {
+  const d = parseDate(s);
+  return ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()] + ' ' + d.getFullYear();
+}
+
+function getDay(date) {
+  if (!state.days[date]) state.days[date] = { tasks: [] };
+  migrateTasks(state.days[date]);
+  return state.days[date];
+}
+function dayStats(date) {
+  const tasks = state.days[date]?.tasks || [];
+  const total = tasks.length;
+  const done  = tasks.filter(t => t.done).length;
+  const pct   = total === 0 ? 0 : (done / total);
+  return { total, done, pct };
+}
+
+/* ------------------------ Sound (Web Audio) ------------------------ */
+let audioCtx;
+function tone(freq, dur = 0.12, type = 'sine', vol = 0.15) {
+  if (state.muted) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.value = vol;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+    o.stop(audioCtx.currentTime + dur);
+  } catch {}
+}
+function chime() {
+  tone(880, 0.1, 'sine', 0.12);
+  setTimeout(() => tone(1318, 0.18, 'sine', 0.10), 90);
+  setTimeout(() => tone(1760, 0.22, 'triangle', 0.08), 180);
+}
+function pluck() { tone(660, 0.08, 'triangle', 0.08); }
+function fanfare() {
+  [523, 659, 784, 1047, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.13), i * 90));
+}
+
+/* ------------------------ FX ------------------------ */
+const fxLayer = document.getElementById('fx');
+function spawnSparkles(x, y, count = 14, palette = ['#FF7AA2', '#EC4080', '#FFD66B', '#D9B8FF', '#FFC8D9']) {
+  for (let i = 0; i < count; i++) {
+    const s = document.createElement('div');
+    s.className = 'sparkle';
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = 40 + Math.random() * 120;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist - 40;
+    const size = 8 + Math.random() * 14;
+    const color = palette[Math.floor(Math.random() * palette.length)];
+    s.style.left = (x - size/2) + 'px';
+    s.style.top  = (y - size/2) + 'px';
+    s.style.width = s.style.height = size + 'px';
+    s.innerHTML = `<svg viewBox="0 0 24 24" fill="${color}"><path d="M12 2l1.8 6.5L20 10l-6.2 1.5L12 18l-1.8-6.5L4 10l6.2-1.5L12 2z"/></svg>`;
+    s.animate([
+      { transform: 'translate(0,0) scale(0.4) rotate(0)', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px) scale(1.2) rotate(${Math.random()*360}deg)`, opacity: 0 }
+    ], { duration: 900 + Math.random()*500, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+    fxLayer.appendChild(s);
+    setTimeout(() => s.remove(), 1500);
+  }
+}
+function spawnHeartBurst(x, y, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const s = document.createElement('div');
+    s.className = 'sparkle';
+    const angle = -Math.PI/2 + (Math.random() - 0.5) * 1.6;
+    const dist  = 80 + Math.random() * 120;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const size = 16 + Math.random() * 18;
+    s.style.left = (x - size/2) + 'px';
+    s.style.top  = (y - size/2) + 'px';
+    s.style.width = s.style.height = size + 'px';
+    s.innerHTML = `<svg viewBox="0 0 24 24" fill="#EC4080"><path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z"/></svg>`;
+    s.animate([
+      { transform: 'translate(0,0) scale(0.5)', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px) scale(1.1) rotate(${(Math.random()-0.5)*60}deg)`, opacity: 0 }
+    ], { duration: 1300 + Math.random()*400, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+    fxLayer.appendChild(s);
+    setTimeout(() => s.remove(), 1800);
+  }
+}
+
+/* ============================================================
+   PLANT — kawaii flower (cuter, blushy, sparkly)
+   Stage by % completion of the day's tasks:
+     0%        -> seed
+     1-29%     -> sprout
+     30-59%    -> seedling (leaves)
+     60-89%    -> bud (closed flower with bow)
+     90-99%    -> blooming (open flower, wide smile)
+     100%      -> full bloom (heart eyes, sparkles, bouquet bow)
+   ============================================================ */
+
+const POT_DEFS = `
+  <defs>
+    <linearGradient id="potG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FF9DBA"/>
+      <stop offset="1" stop-color="#EC4080"/>
+    </linearGradient>
+    <linearGradient id="potShine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="rgba(255,255,255,0.5)"/>
+      <stop offset="0.3" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+    <linearGradient id="leafG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A9EDC0"/>
+      <stop offset="1" stop-color="#5DBE82"/>
+    </linearGradient>
+    <radialGradient id="petalLight" cx="0.4" cy="0.3" r="0.7">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.4" stop-color="#FFE4EC"/>
+      <stop offset="1" stop-color="#FF7AA2"/>
+    </radialGradient>
+    <radialGradient id="petalDeep" cx="0.4" cy="0.3" r="0.7">
+      <stop offset="0" stop-color="#FFD9E6"/>
+      <stop offset="0.4" stop-color="#FF9DBA"/>
+      <stop offset="1" stop-color="#EC4080"/>
+    </radialGradient>
+    <radialGradient id="centerG" cx="0.4" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#FFF0B3"/>
+      <stop offset="0.6" stop-color="#FFD66B"/>
+      <stop offset="1" stop-color="#F2A93B"/>
+    </radialGradient>
+    <radialGradient id="cheekG" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FF85AB" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#FF85AB" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+`;
+
+const POT = `
+  <ellipse cx="100" cy="182" rx="58" ry="6" fill="rgba(236,64,128,0.18)"/>
+  <path d="M55 145 L65 178 Q100 188 135 178 L145 145 Z" fill="url(#potG)"/>
+  <path d="M62 152 L67 175 Q70 178 72 178 L66 152 Z" fill="url(#potShine)" opacity="0.6"/>
+  <ellipse cx="100" cy="145" rx="45" ry="7" fill="#FFB3CB"/>
+  <ellipse cx="100" cy="145" rx="40" ry="5" fill="#8E1F50"/>
+  <ellipse cx="100" cy="146" rx="38" ry="4" fill="#5C1336"/>
+  <!-- pot heart -->
+  <path d="M100 168 c-2 -2 -5 -2 -5 1 c0 2 5 5 5 5 s5 -3 5 -5 c0 -3 -3 -3 -5 -1z" fill="#FFD66B" opacity="0.9"/>
+`;
+
+// kawaii face — eye types: 'dot' | 'sparkle' | 'heart' | 'closed' | 'wink'
+function face(cx, cy, opts = {}) {
+  const { eye = 'sparkle', mouth = 'smile', cheek = true, scale = 1 } = opts;
+  const eyeOffsetX = 5.5 * scale;
+  const eyeY = cy - 1.5;
+
+  function eyeShape(x, y) {
+    if (eye === 'dot')    return `<circle cx="${x}" cy="${y}" r="${1.6*scale}" fill="#3a0d22"/>`;
+    if (eye === 'closed') return `<path d="M${x-2.5*scale} ${y} q${2.5*scale} ${2.5*scale} ${5*scale} 0" stroke="#3a0d22" stroke-width="${1.6*scale}" fill="none" stroke-linecap="round"/>`;
+    if (eye === 'wink')   return `<path d="M${x-2.5*scale} ${y} q${2.5*scale} ${2.5*scale} ${5*scale} 0" stroke="#3a0d22" stroke-width="${1.6*scale}" fill="none" stroke-linecap="round"/>`;
+    if (eye === 'heart')  return `
+      <path d="M${x} ${y+2.5*scale}
+               c-${1.6*scale} -${1.8*scale} -${4*scale} -${1.4*scale} -${4*scale} ${0.8*scale}
+               c0 ${2*scale} ${4*scale} ${3.5*scale} ${4*scale} ${3.5*scale}
+               s${4*scale} -${1.5*scale} ${4*scale} -${3.5*scale}
+               c0 -${2.2*scale} -${2.4*scale} -${2.6*scale} -${4*scale} -${0.8*scale} z"
+            fill="#EC4080"/>`;
+    // sparkle eye (default)
+    return `
+      <ellipse cx="${x}" cy="${y}" rx="${2.4*scale}" ry="${3*scale}" fill="#3a0d22"/>
+      <circle cx="${x - 0.7*scale}" cy="${y - 0.9*scale}" r="${0.9*scale}" fill="#fff"/>
+      <circle cx="${x + 0.9*scale}" cy="${y + 1.2*scale}" r="${0.4*scale}" fill="#fff"/>
+    `;
+  }
+
+  let leftEye = eyeShape(cx - eyeOffsetX, eyeY);
+  let rightEye = eyeShape(cx + eyeOffsetX, eyeY);
+  if (eye === 'wink') {
+    // make right eye a wink, left eye normal sparkle
+    leftEye = `
+      <ellipse cx="${cx - eyeOffsetX}" cy="${eyeY}" rx="${2.4*scale}" ry="${3*scale}" fill="#3a0d22"/>
+      <circle cx="${cx - eyeOffsetX - 0.7*scale}" cy="${eyeY - 0.9*scale}" r="${0.9*scale}" fill="#fff"/>
+    `;
+  }
+
+  let mouthShape = '';
+  if (mouth === 'smile') mouthShape = `<path d="M${cx-3*scale} ${cy+3.5*scale} q${3*scale} ${3*scale} ${6*scale} 0" stroke="#3a0d22" stroke-width="${1.4*scale}" fill="none" stroke-linecap="round"/>`;
+  else if (mouth === 'wide') mouthShape = `
+    <path d="M${cx-5*scale} ${cy+3.5*scale} q${5*scale} ${5*scale} ${10*scale} 0 q-${5*scale} ${1*scale} -${10*scale} 0z" fill="#7A1A3D"/>
+    <path d="M${cx-3.5*scale} ${cy+5*scale} q${3.5*scale} ${1.5*scale} ${7*scale} 0" fill="#FF85AB"/>
+  `;
+  else if (mouth === 'oh') mouthShape = `<ellipse cx="${cx}" cy="${cy+5*scale}" rx="${1.8*scale}" ry="${2.2*scale}" fill="#7A1A3D"/>`;
+
+  const cheeks = cheek ? `
+    <ellipse cx="${cx-7*scale}" cy="${cy+3*scale}" rx="${3*scale}" ry="${2.2*scale}" fill="url(#cheekG)"/>
+    <ellipse cx="${cx+7*scale}" cy="${cy+3*scale}" rx="${3*scale}" ry="${2.2*scale}" fill="url(#cheekG)"/>
+  ` : '';
+
+  return `${cheeks}${leftEye}${rightEye}${mouthShape}`;
+}
+
+function leaves(stage = 1) {
+  // stage 1 = small, 2 = medium, 3 = full
+  if (stage === 1) {
+    return `
+      <ellipse cx="92" cy="128" rx="9" ry="5" fill="url(#leafG)" transform="rotate(-30 92 128)"/>
+      <ellipse cx="108" cy="124" rx="10" ry="5" fill="url(#leafG)" transform="rotate(35 108 124)"/>
+    `;
+  }
+  if (stage === 2) {
+    return `
+      <ellipse cx="84" cy="125" rx="14" ry="6" fill="url(#leafG)" transform="rotate(-30 84 125)"/>
+      <ellipse cx="116" cy="120" rx="14" ry="6" fill="url(#leafG)" transform="rotate(35 116 120)"/>
+      <ellipse cx="86" cy="100" rx="11" ry="5" fill="url(#leafG)" transform="rotate(-25 86 100)"/>
+      <ellipse cx="114" cy="96" rx="12" ry="5" fill="url(#leafG)" transform="rotate(30 114 96)"/>
+    `;
+  }
+  return `
+    <ellipse cx="80" cy="118" rx="17" ry="7" fill="url(#leafG)" transform="rotate(-30 80 118)"/>
+    <ellipse cx="120" cy="114" rx="17" ry="7" fill="url(#leafG)" transform="rotate(35 120 114)"/>
+    <ellipse cx="84" cy="92"  rx="14" ry="6" fill="url(#leafG)" transform="rotate(-25 84 92)"/>
+    <ellipse cx="116" cy="88" rx="14" ry="6" fill="url(#leafG)" transform="rotate(30 116 88)"/>
+  `;
+}
+
+function petalRing(cx, cy, count, rx, ry, ringRadius, fill) {
+  let out = '';
+  for (let i = 0; i < count; i++) {
+    const a = (360 / count) * i;
+    const rad = (a - 90) * Math.PI / 180;
+    const px = cx + Math.cos(rad) * ringRadius;
+    const py = cy + Math.sin(rad) * ringRadius;
+    out += `<g transform="rotate(${a} ${cx} ${cy})">
+      <ellipse cx="${cx}" cy="${cy - ringRadius}" rx="${rx}" ry="${ry}" fill="${fill}"/>
+    </g>`;
+  }
+  return out;
+}
+
+function renderSeed() {
+  return POT_DEFS + POT + `
+    <g class="animate-breathe" style="transform-origin: 100px 142px">
+      <ellipse cx="100" cy="140" rx="11" ry="7" fill="#8E1F50"/>
+      <path d="M97 138 q3 -4 6 0" stroke="#FFC8D9" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+      <circle cx="96" cy="139" r="0.7" fill="#fff"/>
+    </g>
+  `;
+}
+
+function renderSprout() {
+  return POT_DEFS + POT + `
+    <g class="animate-sway" style="transform-origin: 100px 145px">
+      <path d="M100 145 Q100 122 100 108" stroke="#5DBE82" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      ${leaves(1)}
+      <g style="transform-origin: 100px 102px" class="animate-breathe">
+        <circle cx="100" cy="102" r="9" fill="url(#petalLight)"/>
+        ${face(100, 102, { eye: 'sparkle', mouth: 'smile', scale: 0.7 })}
+      </g>
+    </g>
+  `;
+}
+
+function renderSeedling() {
+  return POT_DEFS + POT + `
+    <g class="animate-sway" style="transform-origin: 100px 145px">
+      <path d="M100 145 Q98 110 100 80" stroke="#5DBE82" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      ${leaves(2)}
+      <g style="transform-origin: 100px 75px" class="animate-breathe">
+        <circle cx="100" cy="75" r="11" fill="url(#petalLight)"/>
+        ${face(100, 76, { eye: 'sparkle', mouth: 'smile', scale: 0.85 })}
+      </g>
+    </g>
+  `;
+}
+
+function renderBud() {
+  return POT_DEFS + POT + `
+    <g class="animate-sway" style="transform-origin: 100px 145px">
+      <path d="M100 145 Q98 105 100 70" stroke="#5DBE82" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      ${leaves(3)}
+      <!-- bow on stem -->
+      <path d="M88 110 Q100 102 112 110 Q104 116 100 113 Q96 116 88 110z" fill="#FF7AA2" stroke="#C32A6B" stroke-width="0.6"/>
+      <circle cx="100" cy="111" r="2" fill="#FFD66B"/>
+      <!-- closed petals (bud) -->
+      <g style="transform-origin: 100px 60px" class="animate-breathe">
+        <ellipse cx="92" cy="62" rx="9" ry="14" fill="url(#petalLight)" transform="rotate(-15 92 62)"/>
+        <ellipse cx="108" cy="62" rx="9" ry="14" fill="url(#petalDeep)" transform="rotate(15 108 62)"/>
+        <ellipse cx="100" cy="56" rx="10" ry="15" fill="url(#petalLight)"/>
+        ${face(100, 60, { eye: 'closed', mouth: 'smile', scale: 0.85 })}
+      </g>
+    </g>
+  `;
+}
+
+function renderBlooming() {
+  // open flower, 8 petals, wide smile
+  return POT_DEFS + POT + `
+    <g class="animate-sway" style="transform-origin: 100px 145px">
+      <path d="M100 145 Q98 100 100 60" stroke="#5DBE82" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      ${leaves(3)}
+      <path d="M88 110 Q100 102 112 110 Q104 116 100 113 Q96 116 88 110z" fill="#FF7AA2" stroke="#C32A6B" stroke-width="0.6"/>
+      <circle cx="100" cy="111" r="2" fill="#FFD66B"/>
+      <!-- back petals (deeper) -->
+      <g style="transform-origin: 100px 55px">
+        ${petalRing(100, 55, 8, 9, 14, 18, 'url(#petalDeep)')}
+      </g>
+      <!-- front petals (lighter) -->
+      <g style="transform-origin: 100px 55px" class="animate-breathe">
+        ${petalRing(100, 55, 6, 11, 16, 14, 'url(#petalLight)')}
+        <circle cx="100" cy="55" r="11" fill="url(#centerG)"/>
+        <circle cx="96" cy="51" r="2.5" fill="#fff" opacity="0.8"/>
+        ${face(100, 56, { eye: 'sparkle', mouth: 'wide', scale: 1 })}
+      </g>
+    </g>
+  `;
+}
+
+function renderFullBloom() {
+  // bouquet of 3 flowers, heart eyes, twinkles
+  return POT_DEFS + POT + `
+    <g class="animate-sway" style="transform-origin: 100px 145px">
+      <!-- stems -->
+      <path d="M100 145 Q90 110 72 78"  stroke="#5DBE82" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M100 145 Q100 105 100 55" stroke="#5DBE82" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      <path d="M100 145 Q110 110 128 78" stroke="#5DBE82" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+      <ellipse cx="80" cy="118" rx="17" ry="7" fill="url(#leafG)" transform="rotate(-30 80 118)"/>
+      <ellipse cx="120" cy="114" rx="17" ry="7" fill="url(#leafG)" transform="rotate(35 120 114)"/>
+      <ellipse cx="86" cy="92"  rx="13" ry="5" fill="url(#leafG)" transform="rotate(-25 86 92)"/>
+      <ellipse cx="114" cy="92" rx="13" ry="5" fill="url(#leafG)" transform="rotate(30 114 92)"/>
+
+      <!-- bow -->
+      <path d="M82 122 Q100 110 118 122 Q108 130 100 125 Q92 130 82 122z" fill="#FFD66B" stroke="#C32A6B" stroke-width="0.7"/>
+      <circle cx="100" cy="124" r="2.6" fill="#EC4080"/>
+
+      <!-- left small flower -->
+      <g style="transform-origin: 72px 78px" class="animate-breathe">
+        ${petalRing(72, 78, 6, 6, 9, 9, 'url(#petalDeep)')}
+        <circle cx="72" cy="78" r="6" fill="url(#centerG)"/>
+        ${face(72, 79, { eye: 'dot', mouth: 'smile', scale: 0.55, cheek: false })}
+      </g>
+      <!-- right small flower -->
+      <g style="transform-origin: 128px 78px" class="animate-breathe" >
+        ${petalRing(128, 78, 6, 6, 9, 9, 'url(#petalLight)')}
+        <circle cx="128" cy="78" r="6" fill="url(#centerG)"/>
+        ${face(128, 79, { eye: 'dot', mouth: 'smile', scale: 0.55, cheek: false })}
+      </g>
+      <!-- main flower -->
+      <g style="transform-origin: 100px 55px">
+        ${petalRing(100, 55, 8, 9, 14, 19, 'url(#petalDeep)')}
+      </g>
+      <g style="transform-origin: 100px 55px" class="animate-breathe">
+        ${petalRing(100, 55, 6, 11, 17, 14, 'url(#petalLight)')}
+        <circle cx="100" cy="55" r="12" fill="url(#centerG)"/>
+        <circle cx="95" cy="50" r="3" fill="#fff" opacity="0.85"/>
+        ${face(100, 56, { eye: 'heart', mouth: 'wide', scale: 1.05 })}
+      </g>
+
+      <!-- twinkles -->
+      <g class="animate-twinkle" style="transform-origin: 60px 50px">
+        <path d="M60 45 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5z" fill="#FFD66B"/>
+      </g>
+      <g class="animate-twinkle" style="transform-origin: 145px 60px; animation-delay:-1s">
+        <path d="M145 55 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5z" fill="#FF7AA2"/>
+      </g>
+      <g class="animate-twinkle" style="transform-origin: 50px 95px; animation-delay:-1.5s">
+        <path d="M50 92 l1 2.5 2.5 1 -2.5 1 -1 2.5 -1 -2.5 -2.5 -1 2.5 -1z" fill="#D9B8FF"/>
+      </g>
+      <g class="animate-twinkle" style="transform-origin: 155px 95px; animation-delay:-0.5s">
+        <path d="M155 92 l1 2.5 2.5 1 -2.5 1 -1 2.5 -1 -2.5 -2.5 -1 2.5 -1z" fill="#FFD66B"/>
+      </g>
+    </g>
+  `;
+}
+
+function plantForPct(pct, total) {
+  // pct in [0,1]
+  if (total === 0)        return { name: 'Empty soil',  label: 'add a task to plant a seed 🌱',                  svg: renderSeed() };
+  if (pct === 0)          return { name: 'Seed',        label: 'a tiny seed, full of hope',                       svg: renderSeed() };
+  if (pct < 0.30)         return { name: 'Sprout',      label: 'a hopeful little sprout 🌱',                       svg: renderSprout() };
+  if (pct < 0.60)         return { name: 'Seedling',    label: 'leafy and so proud',                              svg: renderSeedling() };
+  if (pct < 0.90)         return { name: 'Budding',     label: 'a tiny bud is forming, almost there!',            svg: renderBud() };
+  if (pct < 1.00)         return { name: 'Blooming',    label: 'in full pink bloom 🌸',                            svg: renderBlooming() };
+  return                         { name: 'Full Bloom!', label: 'a perfect day. you grew the whole bouquet 💕',     svg: renderFullBloom() };
+}
+
+// Mini flower for calendar chips & garden
+function miniFlower(pct, total) {
+  if (total === 0) return `<svg viewBox="0 0 26 26" class="mini-flower"><circle cx="13" cy="13" r="3" fill="#FFC8D9" opacity="0.5"/></svg>`;
+  if (pct === 0) return `<svg viewBox="0 0 26 26" class="mini-flower"><ellipse cx="13" cy="14" rx="4" ry="3" fill="#8E1F50"/></svg>`;
+  if (pct < 0.30) return `<svg viewBox="0 0 26 26" class="mini-flower"><path d="M13 22 V12" stroke="#5DBE82" stroke-width="1.5" stroke-linecap="round"/><circle cx="13" cy="10" r="3.5" fill="#FF9DBA"/></svg>`;
+  if (pct < 0.60) return `<svg viewBox="0 0 26 26" class="mini-flower"><path d="M13 22 V8" stroke="#5DBE82" stroke-width="1.5" stroke-linecap="round"/><ellipse cx="9" cy="14" rx="3" ry="1.5" fill="#5DBE82" transform="rotate(-30 9 14)"/><ellipse cx="17" cy="14" rx="3" ry="1.5" fill="#5DBE82" transform="rotate(30 17 14)"/><circle cx="13" cy="7" r="4" fill="#FF7AA2"/></svg>`;
+  if (pct < 1)   return `<svg viewBox="0 0 26 26" class="mini-flower"><path d="M13 22 V10" stroke="#5DBE82" stroke-width="1.5" stroke-linecap="round"/><circle cx="13" cy="9" r="2.5" fill="#FFD66B"/><circle cx="9" cy="7" r="2.5" fill="#FF7AA2"/><circle cx="17" cy="7" r="2.5" fill="#FF7AA2"/><circle cx="13" cy="5" r="2.5" fill="#FFC8D9"/><circle cx="11" cy="11" r="2.5" fill="#EC4080"/><circle cx="15" cy="11" r="2.5" fill="#EC4080"/></svg>`;
+  // full bloom
+  return `<svg viewBox="0 0 26 26" class="mini-flower">
+    <path d="M13 22 V11" stroke="#5DBE82" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="9"  cy="9"  r="3.5" fill="#FF7AA2"/>
+    <circle cx="17" cy="9"  r="3.5" fill="#FF7AA2"/>
+    <circle cx="13" cy="6"  r="3.5" fill="#EC4080"/>
+    <circle cx="11" cy="12" r="3.5" fill="#EC4080"/>
+    <circle cx="15" cy="12" r="3.5" fill="#EC4080"/>
+    <circle cx="13" cy="9"  r="3"   fill="#FFD66B"/>
+  </svg>`;
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+
+function renderWeek() {
+  const start = startOfWeek(state.weekAnchor);
+  const strip = document.getElementById('weekStrip');
+  strip.innerHTML = '';
+  const today = todayStr();
+  const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(start, i);
+    const stats = dayStats(d);
+    const chip = document.createElement('button');
+    chip.className = 'day-chip';
+    if (d === state.selectedDate) chip.classList.add('selected');
+    if (d === today) chip.classList.add('today');
+    chip.dataset.date = d;
+    chip.innerHTML = `
+      <span class="dow">${dows[i]}</span>
+      <span class="dom">${parseDate(d).getDate()}</span>
+      ${miniFlower(stats.pct, stats.total)}
+    `;
+    chip.addEventListener('click', () => {
+      state.selectedDate = d;
+      save(); renderAll();
+    });
+    strip.appendChild(chip);
+  }
+}
+
+function renderMonth() {
+  const grid = document.getElementById('monthGrid');
+  const header = document.getElementById('monthHeader');
+  const anchor = parseDate(state.weekAnchor);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const firstStr = ymd(new Date(year, month, 1));
+  const start = startOfWeek(firstStr);
+  const today = todayStr();
+  const bloomSet = new Set(state.bloomDates);
+
+  header.innerHTML = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+    .map(d => `<div class="text-center text-[10px] font-bold text-blush-500 uppercase tracking-wider">${d}</div>`)
+    .join('');
+
+  // Show 6 weeks (42 cells) so month always fits
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(start, i);
+    const dt = parseDate(d);
+    const inMonth   = dt.getMonth() === month;
+    const stats     = dayStats(d);
+    const isToday   = d === today;
+    const isSel     = d === state.selectedDate;
+    const isBloom   = bloomSet.has(d);
+    const cls = ['month-cell'];
+    if (!inMonth) cls.push('other-month');
+    if (isToday)  cls.push('today');
+    if (isSel)    cls.push('selected');
+    if (isBloom)  cls.push('bloomed');
+    html += `<button class="${cls.join(' ')}" data-date="${d}">
+      <span class="day-num">${dt.getDate()}</span>
+      <div class="mini">${stats.total > 0 ? miniFlower(stats.pct, stats.total) : '<svg viewBox=\"0 0 26 26\" class=\"mini-flower\"><circle cx=\"13\" cy=\"13\" r=\"2\" fill=\"#FFC8D9\" opacity=\"0.5\"/></svg>'}</div>
+    </button>`;
+  }
+  grid.innerHTML = html;
+  grid.querySelectorAll('[data-date]').forEach(b => {
+    b.addEventListener('click', () => {
+      state.selectedDate = b.dataset.date;
+      // keep month-anchor on the clicked date so navigation feels intuitive
+      state.weekAnchor = b.dataset.date;
+      save(); renderAll();
+    });
+  });
+}
+
+function applyCalView() {
+  const isWeek = state.calView === 'week';
+  const week  = document.getElementById('weekStrip');
+  const grid  = document.getElementById('monthGrid');
+  const head  = document.getElementById('monthHeader');
+  week.classList.toggle('hidden', !isWeek);
+  week.classList.toggle('flex',   isWeek);
+  grid.classList.toggle('hidden', isWeek);
+  grid.classList.toggle('grid',   !isWeek);
+  head.classList.toggle('hidden', isWeek);
+  head.classList.toggle('grid',   !isWeek);
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.calView));
+}
+
+function updateMonthLabel() {
+  if (state.calView === 'month') {
+    document.getElementById('monthLabel').textContent = monthLabelOf(state.weekAnchor);
+  } else {
+    const start = startOfWeek(state.weekAnchor);
+    const months = new Set();
+    for (let i = 0; i < 7; i++) months.add(monthLabelOf(addDays(start, i)));
+    document.getElementById('monthLabel').textContent = [...months].join(' / ');
+  }
+}
+
+function renderPlant() {
+  const stats = dayStats(state.selectedDate);
+  const plant = plantForPct(stats.pct, stats.total);
+  document.getElementById('plantSvg').innerHTML = plant.svg;
+  document.getElementById('stageLabel').textContent = plant.label;
+  document.getElementById('dayTitle').textContent = formatDayTitle(state.selectedDate) + (state.selectedDate === todayStr() ? ' · today' : '');
+  document.getElementById('dayDone').textContent = stats.done;
+  document.getElementById('dayTotal').textContent = stats.total;
+  document.getElementById('dayPct').textContent = Math.round(stats.pct * 100);
+  document.getElementById('progressFill').style.width = (stats.pct * 100) + '%';
+  document.getElementById('bloomGlow').classList.toggle('hidden', stats.pct < 1 || stats.total === 0);
+
+  if (stats.total === 0) {
+    document.getElementById('growHint').textContent = 'add a task to start growing 🌱';
+  } else if (stats.pct === 1) {
+    document.getElementById('growHint').textContent = '🎉 fully bloomed! flower added to your garden';
+  } else {
+    const left = stats.total - stats.done;
+    document.getElementById('growHint').textContent = `${left} more to fully bloom ✨`;
+  }
+}
+
+function renderTasks() {
+  const day = getDay(state.selectedDate);
+  const allDayTasks = day.tasks.slice();
+  // category-scoped
+  const catTasks = allDayTasks.filter(t => t.category === state.category).sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return b.createdAt - a.createdAt;
+  });
+  let view = catTasks;
+  if (state.filter === 'active') view = view.filter(t => !t.done);
+  if (state.filter === 'done')   view = view.filter(t => t.done);
+
+  const list = document.getElementById('taskList');
+  const empty = document.getElementById('emptyState');
+  list.innerHTML = '';
+
+  // Update placeholder & tab counts
+  document.getElementById('taskInput').placeholder = state.category === 'school'
+    ? 'add a class, assignment, or study session 📚'
+    : "what's on your heart for this day, love? 🩷";
+  document.getElementById('catCountTodo').textContent   = allDayTasks.filter(t => t.category === 'todo').length;
+  document.getElementById('catCountSchool').textContent = allDayTasks.filter(t => t.category === 'school').length;
+  document.querySelectorAll('[data-cat]').forEach(b => b.classList.toggle('active', b.dataset.cat === state.category));
+
+  if (view.length === 0) {
+    empty.classList.remove('hidden');
+    empty.classList.add('flex');
+    const catLabel = state.category === 'school' ? 'school tasks' : 'to-do tasks';
+    if (catTasks.length === 0) {
+      document.getElementById('emptyTitle').textContent = `no ${catLabel} yet 🌸`;
+      document.getElementById('emptyBody').textContent  = state.category === 'school'
+        ? 'add an assignment, lecture, or quiz prep above'
+        : 'add one above to plant a seed for this day';
+    } else {
+      document.getElementById('emptyTitle').textContent = 'nothing here in this filter';
+      document.getElementById('emptyBody').textContent  = 'try switching filter pills above';
+    }
+  } else {
+    empty.classList.add('hidden');
+    empty.classList.remove('flex');
+  }
+
+  for (const t of view) {
+    const li = document.createElement('li');
+    li.className = `task-row group flex items-center gap-3 p-3 sm:p-4 rounded-2xl bg-white/70 hover:bg-white border-2 border-transparent hover:border-blush-200 transition-all ${t.done ? 'done opacity-80' : ''}`;
+    li.innerHTML = `
+      <button class="heart-check ${t.done ? 'checked' : ''}" aria-label="${t.done ? 'Mark incomplete' : 'Mark complete'}" data-act="toggle" data-id="${t.id}">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="task-text flex-1 text-base font-semibold text-blush-800 break-words">${escapeHtml(t.text)}</span>
+      <button class="cursor-pointer w-8 h-8 rounded-full text-blush-400 hover:text-blush-700 hover:bg-blush-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all" aria-label="Delete task" data-act="delete" data-id="${t.id}">
+        <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+      </button>
+    `;
+    list.appendChild(li);
+  }
+
+  document.getElementById('countAll').textContent    = catTasks.length;
+  document.getElementById('countActive').textContent = catTasks.filter(t => !t.done).length;
+  document.getElementById('countDone').textContent   = catTasks.filter(t => t.done).length;
+}
+
+function renderGarden() {
+  const wrap = document.getElementById('garden');
+  wrap.innerHTML = '';
+  const dates = state.bloomDates.slice().sort();
+  document.getElementById('gardenCount').textContent = dates.length;
+  if (dates.length === 0) {
+    wrap.innerHTML = `<div class="col-span-full text-center py-8 text-blush-400 text-sm font-medium">no flowers yet — finish all tasks for a day to grow one 🌷</div>`;
+    return;
+  }
+  for (const d of dates) {
+    const cell = document.createElement('button');
+    cell.className = 'group cursor-pointer flex flex-col items-center gap-1 p-2 rounded-2xl hover:bg-blush-50 transition-all';
+    cell.title = formatDayTitle(d);
+    cell.innerHTML = `
+      <div class="w-10 h-10 transition-transform group-hover:scale-110">${miniFlower(1, 1)}</div>
+      <span class="text-[10px] font-bold text-blush-600">${parseDate(d).getDate()}</span>
+    `;
+    cell.addEventListener('click', () => {
+      state.selectedDate = d;
+      state.weekAnchor = d;
+      save(); renderAll();
+    });
+    wrap.appendChild(cell);
+  }
+}
+
+function renderStats() {
+  document.getElementById('streak').textContent    = state.streak;
+  document.getElementById('bloomCount').textContent = state.bloomDates.length;
+}
+function renderFilters() {
+  document.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('active', b.dataset.filter === state.filter));
+}
+function renderMute() {
+  document.getElementById('soundOn').classList.toggle('hidden', state.muted);
+  document.getElementById('soundOff').classList.toggle('hidden', !state.muted);
+}
+function renderAll() {
+  renderWeek(); renderMonth(); applyCalView(); updateMonthLabel();
+  renderPlant(); renderTasks(); renderGarden(); renderStats(); renderFilters(); renderMute();
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ============================================================
+   Mutations
+   ============================================================ */
+
+function addTask(text) {
+  text = text.trim();
+  if (!text) return;
+  const day = getDay(state.selectedDate);
+  day.tasks.unshift({
+    id: Math.random().toString(36).slice(2, 10),
+    text, done: false, createdAt: Date.now(), doneAt: null,
+    category: state.category,
+  });
+  pluck();
+  save(); renderTasks(); renderPlant(); renderWeek();
+}
+
+function migrateTasks(day) {
+  // backwards-compat: tag legacy tasks as 'todo'
+  for (const t of (day?.tasks || [])) if (!t.category) t.category = 'todo';
+}
+
+const PRAISE = [
+  'You bloomed!', 'Look at you go ✨', 'So proud of you 🩷', 'One petal closer',
+  'Yes queen 👑', 'Tiny win, big love', 'Keep going, sunshine', 'That counts!',
+  'You\'re glowing', 'Magic in motion', 'Petal earned 🌸', 'Soft girl behavior',
+];
+
+function recomputeStreak() {
+  // streak = consecutive days ending at most today with full bloom
+  const set = new Set(state.bloomDates);
+  let cursor = todayStr();
+  // if today not bloomed, start from yesterday
+  if (!set.has(cursor)) cursor = addDays(cursor, -1);
+  let count = 0;
+  while (set.has(cursor)) {
+    count++;
+    cursor = addDays(cursor, -1);
+  }
+  state.streak = count;
+  if (count > state.bestStreak) state.bestStreak = count;
+}
+
+function toggleTask(id, btnEl) {
+  const day = getDay(state.selectedDate);
+  const t = day.tasks.find(x => x.id === id);
+  if (!t) return;
+
+  const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
+
+  t.done = !t.done;
+  t.doneAt = t.done ? Date.now() : null;
+
+  const stats = dayStats(state.selectedDate);
+  const isFull = stats.pct === 1 && stats.total > 0;
+
+  if (t.done) {
+    chime();
+    btnEl?.classList.add('animate-wiggle');
+    setTimeout(() => btnEl?.classList.remove('animate-wiggle'), 400);
+    if (btnEl) {
+      const r = btnEl.getBoundingClientRect();
+      spawnSparkles(r.left + r.width/2, r.top + r.height/2, 14);
+    }
+    const msg = PRAISE[Math.floor(Math.random() * PRAISE.length)];
+    toast(msg, `${stats.done} of ${stats.total} done`);
+  } else {
+    pluck();
+  }
+
+  // Bloom transition
+  if (!wasFull && isFull) {
+    if (!state.bloomDates.includes(state.selectedDate)) state.bloomDates.push(state.selectedDate);
+    fanfare();
+    const plantBox = document.getElementById('plantSvg').getBoundingClientRect();
+    spawnHeartBurst(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 16);
+    spawnSparkles(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 36);
+    setTimeout(() => toast('Full bloom! 🌷', 'a flower joins your garden'), 200);
+  } else if (wasFull && !isFull) {
+    state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+  }
+  recomputeStreak();
+  save(); renderAll();
+}
+
+function deleteTask(id) {
+  const day = getDay(state.selectedDate);
+  const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
+  day.tasks = day.tasks.filter(t => t.id !== id);
+  const stats = dayStats(state.selectedDate);
+  const isFull = stats.pct === 1 && stats.total > 0;
+  if (!wasFull && isFull) {
+    if (!state.bloomDates.includes(state.selectedDate)) state.bloomDates.push(state.selectedDate);
+  } else if (wasFull && !isFull) {
+    state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+  }
+  recomputeStreak();
+  save(); renderAll();
+}
+
+function clearDone() {
+  const day = getDay(state.selectedDate);
+  if (!day.tasks.some(t => t.done && t.category === state.category)) return;
+  day.tasks = day.tasks.filter(t => !(t.done && t.category === state.category));
+  pluck();
+  // clearing done can only reduce completion; if was full and we just removed all done ones, total now equals undone count, possibly still 0% bloom
+  const stats = dayStats(state.selectedDate);
+  if (stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+  recomputeStreak();
+  save(); renderAll();
+}
+
+function copyYesterday() {
+  const yest = addDays(state.selectedDate, -1);
+  const src = state.days[yest]?.tasks || [];
+  const undone = src.filter(t => !t.done);
+  if (undone.length === 0) {
+    toast('Nothing to copy', `${formatDayTitle(yest)} had no leftover tasks`);
+    return;
+  }
+  const day = getDay(state.selectedDate);
+  const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
+  for (const t of undone) {
+    day.tasks.unshift({
+      id: Math.random().toString(36).slice(2, 10),
+      text: t.text, done: false, createdAt: Date.now(), doneAt: null,
+    });
+  }
+  // adding tasks may break full bloom (now incomplete)
+  const stats = dayStats(state.selectedDate);
+  if (wasFull && stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+  pluck();
+  toast(`+${undone.length} from yesterday`, 'fresh start with a head start');
+  recomputeStreak();
+  save(); renderAll();
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+let toastTimer;
+function toast(title, msg) {
+  const t = document.getElementById('toast');
+  document.getElementById('toastTitle').textContent = title;
+  document.getElementById('toastMsg').textContent   = msg;
+  t.classList.remove('hidden');
+  const inner = t.firstElementChild;
+  inner.classList.remove('toast'); void inner.offsetWidth; inner.classList.add('toast');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 2400);
+}
+
+/* ============================================================
+   Events
+   ============================================================ */
+
+document.getElementById('addForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = document.getElementById('taskInput');
+  addTask(input.value);
+  input.value = '';
+  input.focus();
+});
+
+document.getElementById('taskList').addEventListener('click', e => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  if (btn.dataset.act === 'toggle') toggleTask(btn.dataset.id, btn);
+  if (btn.dataset.act === 'delete') deleteTask(btn.dataset.id);
+});
+
+document.querySelectorAll('[data-filter]').forEach(b => {
+  b.addEventListener('click', () => { state.filter = b.dataset.filter; save(); renderTasks(); renderFilters(); });
+});
+
+document.querySelectorAll('[data-cat]').forEach(b => {
+  b.addEventListener('click', () => {
+    state.category = b.dataset.cat;
+    save(); renderTasks();
+    document.getElementById('taskInput').focus();
+  });
+});
+
+document.getElementById('clearDone').addEventListener('click', clearDone);
+document.getElementById('copyYesterday').addEventListener('click', copyYesterday);
+
+function shiftPeriod(dir) {
+  if (state.calView === 'week') {
+    state.weekAnchor = addDays(startOfWeek(state.weekAnchor), 7 * dir);
+  } else {
+    const d = parseDate(state.weekAnchor);
+    d.setDate(1);
+    d.setMonth(d.getMonth() + dir);
+    state.weekAnchor = ymd(d);
+  }
+  save(); renderWeek(); renderMonth(); updateMonthLabel();
+}
+document.getElementById('prevPeriod').addEventListener('click', () => shiftPeriod(-1));
+document.getElementById('nextPeriod').addEventListener('click', () => shiftPeriod(1));
+
+document.querySelectorAll('[data-view]').forEach(b => {
+  b.addEventListener('click', () => {
+    state.calView = b.dataset.view;
+    save(); renderWeek(); renderMonth(); applyCalView(); updateMonthLabel();
+  });
+});
+document.getElementById('todayBtn').addEventListener('click', () => {
+  state.weekAnchor = todayStr();
+  state.selectedDate = todayStr();
+  save(); renderAll();
+});
+
+document.getElementById('muteBtn').addEventListener('click', () => {
+  state.muted = !state.muted;
+  if (!state.muted) pluck();
+  save(); renderMute();
+});
+
+/* ============================================================
+   Interactive flower
+   ============================================================ */
+const HUGS = [
+  'that tickles 🩷', 'hi cutie!', '*giggles*', 'I love you too 💕',
+  'pat pat 🌸', 'you smell nice', 'thanks for the love',
+  'bloomed just for you', 'hehe', 'one more pet?', 'feeling sparkly ✨',
+];
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+(function setupInteractiveFlower() {
+  const wrap = document.getElementById('plantWrap');
+  const svg  = document.getElementById('plantSvg');
+  if (!wrap || !svg) return;
+
+  let raf = 0;
+  function setTilt(dx, dy) {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      svg.style.transform = `translate(${dx * 10}px, ${dy * 6}px) rotate(${dx * 3}deg)`;
+    });
+  }
+
+  if (!reduceMotion) {
+    wrap.addEventListener('mousemove', e => {
+      const r = wrap.getBoundingClientRect();
+      const dx = (e.clientX - r.left - r.width  / 2) / r.width;
+      const dy = (e.clientY - r.top  - r.height / 2) / r.height;
+      setTilt(Math.max(-0.6, Math.min(0.6, dx)), Math.max(-0.6, Math.min(0.6, dy)));
+    });
+    wrap.addEventListener('mouseleave', () => { svg.style.transform = ''; });
+  }
+
+  let petCount = 0;
+  let petTimer = 0;
+  wrap.addEventListener('click', e => {
+    spawnSparkles(e.clientX, e.clientY, 10);
+    spawnHeartBurst(e.clientX, e.clientY, 5);
+    pluck();
+    svg.classList.add('animate-wiggle');
+    setTimeout(() => svg.classList.remove('animate-wiggle'), 400);
+    toast('🌷', HUGS[Math.floor(Math.random() * HUGS.length)]);
+
+    petCount++;
+    clearTimeout(petTimer);
+    petTimer = setTimeout(() => { petCount = 0; }, 4000);
+    if (petCount === 7) {
+      // easter egg: lots of love
+      const r = wrap.getBoundingClientRect();
+      spawnHeartBurst(r.left + r.width/2, r.top + r.height/2, 24);
+      spawnSparkles(r.left + r.width/2, r.top + r.height/2, 40);
+      fanfare();
+      toast('🥰 ok ok!', 'spoiled with love');
+      petCount = 0;
+    }
+  });
+
+  // touch: don't conflict with click; just allow tap
+  wrap.addEventListener('touchstart', () => { svg.style.transform = ''; }, { passive: true });
+})();
+
+// Seed welcome tasks on first run
+if (Object.keys(state.days).length === 0) {
+  const td = todayStr();
+  state.days[td] = { tasks: [
+    { id: 'w1', text: 'drink some water 💧',         done: false, createdAt: Date.now() - 3000 },
+    { id: 'w2', text: 'stretch for one tiny minute',  done: false, createdAt: Date.now() - 2000 },
+    { id: 'w3', text: 'text someone you love',        done: false, createdAt: Date.now() - 1000 },
+  ]};
+  save();
+}
+
+recomputeStreak();
+renderAll();
+
+window.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault();
+    document.getElementById('taskInput').focus();
+  }
+  if (e.key === 'ArrowLeft' && (e.metaKey || e.altKey)) {
+    state.selectedDate = addDays(state.selectedDate, -1);
+    if (parseDate(state.selectedDate) < parseDate(startOfWeek(state.weekAnchor))) {
+      state.weekAnchor = addDays(startOfWeek(state.weekAnchor), -7);
+    }
+    save(); renderAll();
+  }
+  if (e.key === 'ArrowRight' && (e.metaKey || e.altKey)) {
+    state.selectedDate = addDays(state.selectedDate, 1);
+    const wkEnd = addDays(startOfWeek(state.weekAnchor), 6);
+    if (parseDate(state.selectedDate) > parseDate(wkEnd)) {
+      state.weekAnchor = addDays(startOfWeek(state.weekAnchor), 7);
+    }
+    save(); renderAll();
+  }
+});
+</script>
+</body>
+</html>

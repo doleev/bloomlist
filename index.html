@@ -291,6 +291,7 @@
     </div>
 
     <form id="authForm" class="space-y-3">
+      <input id="authName" type="text" autocomplete="given-name" maxlength="40" class="pretty-input text-center hidden" placeholder="your name 🌷" />
       <input id="authEmail" type="email" required autocomplete="email" class="pretty-input text-center" placeholder="your@email.com" />
       <input id="authPass"  type="password" required minlength="6" autocomplete="current-password" class="pretty-input text-center" placeholder="password (6+ chars)" />
       <button type="submit" id="authBtn" class="pop-btn display text-white font-semibold rounded-2xl px-5 py-3 cursor-pointer w-full">Sign in 🩷</button>
@@ -312,7 +313,7 @@
       </div>
       <div>
         <h1 class="display text-3xl sm:text-4xl font-bold text-blush-700 leading-none">BloomList</h1>
-        <p class="text-sm text-blush-500 font-medium">grow something lovely 🌷</p>
+        <p id="greeting" class="text-sm text-blush-500 font-medium">grow something lovely 🌷</p>
       </div>
     </div>
 
@@ -1620,6 +1621,7 @@ function showApp() {
 }
 
 let authMode = 'signin';
+const nameField = document.getElementById('authName');
 document.querySelectorAll('[data-mode]').forEach(b => {
   b.addEventListener('click', () => {
     authMode = b.dataset.mode;
@@ -1627,6 +1629,9 @@ document.querySelectorAll('[data-mode]').forEach(b => {
     document.getElementById('authBtn').textContent = authMode === 'signin' ? 'Sign in 🩷' : 'Create account 🌷';
     document.getElementById('authPass').autocomplete = authMode === 'signin' ? 'current-password' : 'new-password';
     document.getElementById('authMsg').classList.add('hidden');
+    // show name only on signup
+    nameField.classList.toggle('hidden', authMode !== 'signup');
+    nameField.required = authMode === 'signup';
   });
 });
 
@@ -1634,30 +1639,48 @@ document.getElementById('authForm').addEventListener('submit', async e => {
   e.preventDefault();
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPass').value;
+  const name = document.getElementById('authName').value.trim();
   const btn = document.getElementById('authBtn');
   const msg = document.getElementById('authMsg');
   btn.disabled = true;
   btn.textContent = authMode === 'signin' ? 'signing in...' : 'creating account...';
 
-  const { data, error } = authMode === 'signin'
-    ? await sb.auth.signInWithPassword({ email, password })
-    : await sb.auth.signUp({ email, password });
+  let result;
+  if (authMode === 'signin') {
+    result = await sb.auth.signInWithPassword({ email, password });
+  } else {
+    result = await sb.auth.signUp({
+      email, password,
+      options: { data: { name: name || email.split('@')[0] } },
+    });
+    // Auto-sign-in: signUp returns no session when "Confirm email" is on,
+    // but our DB trigger marks the user confirmed, so password sign-in works.
+    if (!result.error && !result.data.session) {
+      result = await sb.auth.signInWithPassword({ email, password });
+    }
+  }
 
   btn.disabled = false;
   btn.textContent = authMode === 'signin' ? 'Sign in 🩷' : 'Create account 🌷';
-  msg.classList.remove('hidden');
 
-  if (error) {
-    msg.textContent = '✗ ' + error.message;
+  if (result.error) {
+    msg.classList.remove('hidden');
+    msg.textContent = '✗ ' + result.error.message;
     msg.style.color = '#C32A6B';
-  } else if (authMode === 'signup' && !data.session) {
-    msg.textContent = '✓ account created! check your email to confirm, then sign in';
-    msg.style.color = '#5C1336';
-  } else {
-    msg.textContent = '🩷 welcome!';
-    msg.style.color = '#5C1336';
   }
+  // success: onAuthStateChange will hide the overlay
 });
+
+function updateGreeting() {
+  const el = document.getElementById('greeting');
+  if (!el) return;
+  if (session) {
+    const name = session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'lovely';
+    el.textContent = `welcome, ${name} 🩷`;
+  } else {
+    el.textContent = 'grow something lovely 🌷';
+  }
+}
 
 signOutBtn.addEventListener('click', async () => {
   if (!confirm('Sign out? Your flowers stay safe in the cloud 🌷')) return;
@@ -1669,6 +1692,7 @@ sb.auth.onAuthStateChange(async (event, s) => {
     if (session && session.user.id === s.user.id) return;
     session = s;
     showApp();
+    updateGreeting();
     await loadFromCloud();
     subscribeRealtime();
   } else if (event === 'SIGNED_OUT') {
@@ -1676,6 +1700,7 @@ sb.auth.onAuthStateChange(async (event, s) => {
     session = null;
     state.days = {}; state.bloomDates = []; state.streak = 0;
     localStorage.removeItem('bloomlist:seeded');
+    updateGreeting();
     renderAll();
     showAuth();
   }
@@ -1690,6 +1715,7 @@ renderAll();
   if (s) {
     session = s;
     showApp();
+    updateGreeting();
     await loadFromCloud();
     subscribeRealtime();
   } else {

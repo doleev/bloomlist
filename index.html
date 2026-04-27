@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>BloomList — grow something lovely</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -275,6 +276,23 @@
 
 <div id="fx"></div>
 
+<!-- Auth overlay -->
+<div id="authOverlay" class="fixed inset-0 z-[300] flex items-center justify-center hidden" style="background: rgba(255, 244, 248, 0.85); backdrop-filter: blur(10px);">
+  <div class="glass card-shadow rounded-3xl p-8 max-w-sm w-[92%] text-center relative">
+    <div class="w-16 h-16 mx-auto mb-3 rounded-2xl bg-gradient-to-br from-blush-300 to-blush-600 flex items-center justify-center card-shadow animate-breathe">
+      <svg viewBox="0 0 24 24" fill="currentColor" class="w-9 h-9 text-white"><path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z"/></svg>
+    </div>
+    <h2 class="display text-2xl font-bold text-blush-700">welcome to BloomList 🌷</h2>
+    <p class="text-sm text-blush-500 mt-2 mb-5 font-medium">sign in to sync your flowers across all your devices</p>
+    <form id="authForm" class="space-y-3">
+      <input id="authEmail" type="email" required autocomplete="email" class="pretty-input text-center" placeholder="your@email.com" />
+      <button type="submit" id="authBtn" class="pop-btn display text-white font-semibold rounded-2xl px-5 py-3 cursor-pointer w-full">Send magic link 💌</button>
+    </form>
+    <p id="authMsg" class="text-xs mt-4 font-bold hidden"></p>
+    <p class="text-[11px] text-blush-400 mt-4 font-medium">no password needed · we'll email you a sign-in link</p>
+  </div>
+</div>
+
 <main class="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 py-8 sm:py-12">
 
   <!-- Header -->
@@ -300,6 +318,9 @@
         <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-blush-600"><path d="M12 2l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 2z"/></svg>
         <span class="display font-semibold text-blush-700"><span id="bloomCount">0</span> blooms</span>
       </div>
+      <button id="signOutBtn" aria-label="Sign out" title="Sign out" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors hidden">
+        <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600"><path d="M15 12H3m0 0l4-4m-4 4l4 4M21 5v14a2 2 0 01-2 2h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button id="muteBtn" aria-label="Toggle sound" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors">
         <svg id="soundOn" viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600">
           <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor"/>
@@ -468,32 +489,146 @@
    BloomList — daily flowers
    ============================================================ */
 
-const KEY = 'bloomlist:v2';
+/* ============================================================
+   Supabase cloud sync
+   ============================================================ */
+const SUPABASE_URL = 'https://mjxknzuftjejxrdhqnxw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_27rC2Jb4RhM0HpLciDOxsQ_C2AeY7BR';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+});
+let session = null;
+let realtimeChan = null;
+
+const UI_KEY = 'bloomlist:ui';
 let state = load();
 
 function load() {
+  let ui = {};
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s.version === 2) return s;
-    }
+    const raw = localStorage.getItem(UI_KEY);
+    if (raw) ui = JSON.parse(raw);
   } catch {}
   return {
-    version: 2,
-    days: {},          // 'YYYY-MM-DD' -> { tasks: [{id,text,done,doneAt}] }
-    bloomDates: [],    // sorted unique dates that ever hit 100%
-    selectedDate: todayStr(),
-    weekAnchor: todayStr(),
+    days: {},          // 'YYYY-MM-DD' -> { tasks: [...] }   (built from cloud)
+    bloomDates: [],    // derived from days
+    selectedDate: ui.selectedDate || todayStr(),
+    weekAnchor:   ui.weekAnchor   || todayStr(),
     streak: 0,
     bestStreak: 0,
-    muted: false,
-    filter: 'all',
-    category: 'todo',  // 'todo' | 'school'
-    calView: 'week',   // 'week' | 'month'
+    muted:    ui.muted    ?? false,
+    filter:   ui.filter   || 'all',
+    category: ui.category || 'todo',
+    calView:  ui.calView  || 'week',
   };
 }
-function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+function save() {
+  // persist UI prefs only — data lives in Supabase
+  const ui = {
+    selectedDate: state.selectedDate, weekAnchor: state.weekAnchor,
+    muted: state.muted, filter: state.filter,
+    category: state.category, calView: state.calView,
+  };
+  localStorage.setItem(UI_KEY, JSON.stringify(ui));
+}
+
+/* Cloud-side mutations — called by user actions, RLS enforces ownership.
+   Local state is updated optimistically; realtime patches reconcile if needed. */
+async function cloudInsert(row) {
+  const { error } = await sb.from('tasks').insert(row);
+  if (error) toast('Sync error', error.message);
+}
+async function cloudUpdate(id, patch) {
+  const { error } = await sb.from('tasks').update(patch).eq('id', id);
+  if (error) toast('Sync error', error.message);
+}
+async function cloudDelete(id) {
+  const { error } = await sb.from('tasks').delete().eq('id', id);
+  if (error) toast('Sync error', error.message);
+}
+async function cloudDeleteWhere(filter) {
+  let q = sb.from('tasks').delete();
+  for (const [k, v] of Object.entries(filter)) q = q.eq(k, v);
+  const { error } = await q;
+  if (error) toast('Sync error', error.message);
+}
+
+async function loadFromCloud() {
+  const { data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id);
+  if (error) { toast('Load error', error.message); return; }
+  state.days = {};
+  for (const row of data) hydrateRow(row);
+  for (const date in state.days) {
+    state.days[date].tasks.sort((a, b) => b.createdAt - a.createdAt);
+  }
+  recomputeBloomDates();
+  recomputeStreak();
+
+  // Seed welcome tasks once if account is brand new
+  if (data.length === 0 && !localStorage.getItem('bloomlist:seeded')) {
+    localStorage.setItem('bloomlist:seeded', '1');
+    const td = todayStr();
+    const seeds = [
+      { text: 'drink some water 💧',         category: 'todo' },
+      { text: 'stretch for one tiny minute',  category: 'todo' },
+      { text: 'text someone you love',        category: 'todo' },
+    ];
+    for (const s of seeds) {
+      const id = crypto.randomUUID();
+      const day = getDay(td);
+      day.tasks.unshift({ id, text: s.text, done: false, createdAt: Date.now(), doneAt: null, category: s.category });
+      cloudInsert({ id, user_id: session.user.id, date: td, text: s.text, category: s.category, sort_key: Date.now() });
+    }
+  }
+  renderAll();
+}
+
+function hydrateRow(row) {
+  const day = getDay(row.date);
+  // upsert by id
+  const existing = day.tasks.find(t => t.id === row.id);
+  const taskShape = {
+    id: row.id, text: row.text,
+    done: row.done,
+    doneAt: row.done_at ? new Date(row.done_at).getTime() : null,
+    createdAt: row.sort_key,
+    category: row.category,
+  };
+  if (existing) Object.assign(existing, taskShape);
+  else day.tasks.unshift(taskShape);
+}
+
+function recomputeBloomDates() {
+  state.bloomDates = [];
+  for (const date in state.days) {
+    const stats = dayStats(date);
+    if (stats.total > 0 && stats.pct === 1) state.bloomDates.push(date);
+  }
+}
+
+function subscribeRealtime() {
+  if (realtimeChan) sb.removeChannel(realtimeChan);
+  realtimeChan = sb.channel('tasks-' + session.user.id)
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${session.user.id}` },
+        payload => {
+          const { eventType, new: nu, old: ol } = payload;
+          if (eventType === 'INSERT' || eventType === 'UPDATE') {
+            // remove old (in case date changed) then re-add
+            if (ol && ol.id) removeFromState(ol.id, ol.date);
+            hydrateRow(nu);
+          } else if (eventType === 'DELETE') {
+            removeFromState(ol.id, ol.date);
+          }
+          recomputeBloomDates(); recomputeStreak(); renderAll();
+        })
+    .subscribe();
+}
+function removeFromState(id, date) {
+  const day = state.days[date];
+  if (!day) return;
+  day.tasks = day.tasks.filter(t => t.id !== id);
+}
 
 /* ------------------------ Date helpers ------------------------ */
 function todayStr() {
@@ -1170,15 +1305,22 @@ function escapeHtml(s) {
 
 function addTask(text) {
   text = text.trim();
-  if (!text) return;
+  if (!text || !session) return;
   const day = getDay(state.selectedDate);
+  const id = crypto.randomUUID();
+  const now = Date.now();
   day.tasks.unshift({
-    id: Math.random().toString(36).slice(2, 10),
-    text, done: false, createdAt: Date.now(), doneAt: null,
+    id, text, done: false, createdAt: now, doneAt: null,
     category: state.category,
   });
   pluck();
   save(); renderTasks(); renderPlant(); renderWeek();
+  cloudInsert({
+    id, user_id: session.user.id,
+    date: state.selectedDate,
+    text, category: state.category,
+    sort_key: now,
+  });
 }
 
 function migrateTasks(day) {
@@ -1210,12 +1352,13 @@ function recomputeStreak() {
 function toggleTask(id, btnEl) {
   const day = getDay(state.selectedDate);
   const t = day.tasks.find(x => x.id === id);
-  if (!t) return;
+  if (!t || !session) return;
 
   const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
 
   t.done = !t.done;
   t.doneAt = t.done ? Date.now() : null;
+  cloudUpdate(id, { done: t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null });
 
   const stats = dayStats(state.selectedDate);
   const isFull = stats.pct === 1 && stats.total > 0;
@@ -1250,9 +1393,11 @@ function toggleTask(id, btnEl) {
 }
 
 function deleteTask(id) {
+  if (!session) return;
   const day = getDay(state.selectedDate);
   const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
   day.tasks = day.tasks.filter(t => t.id !== id);
+  cloudDelete(id);
   const stats = dayStats(state.selectedDate);
   const isFull = stats.pct === 1 && stats.total > 0;
   if (!wasFull && isFull) {
@@ -1265,9 +1410,12 @@ function deleteTask(id) {
 }
 
 function clearDone() {
+  if (!session) return;
   const day = getDay(state.selectedDate);
-  if (!day.tasks.some(t => t.done && t.category === state.category)) return;
+  const toDelete = day.tasks.filter(t => t.done && t.category === state.category);
+  if (toDelete.length === 0) return;
   day.tasks = day.tasks.filter(t => !(t.done && t.category === state.category));
+  for (const t of toDelete) cloudDelete(t.id);
   pluck();
   // clearing done can only reduce completion; if was full and we just removed all done ones, total now equals undone count, possibly still 0% bloom
   const stats = dayStats(state.selectedDate);
@@ -1277,6 +1425,7 @@ function clearDone() {
 }
 
 function copyYesterday() {
+  if (!session) return;
   const yest = addDays(state.selectedDate, -1);
   const src = state.days[yest]?.tasks || [];
   const undone = src.filter(t => !t.done);
@@ -1286,12 +1435,17 @@ function copyYesterday() {
   }
   const day = getDay(state.selectedDate);
   const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
+  const rows = [];
   for (const t of undone) {
+    const id = crypto.randomUUID();
+    const now = Date.now();
     day.tasks.unshift({
-      id: Math.random().toString(36).slice(2, 10),
-      text: t.text, done: false, createdAt: Date.now(), doneAt: null,
+      id, text: t.text, done: false, createdAt: now, doneAt: null,
+      category: t.category || 'todo',
     });
+    rows.push({ id, user_id: session.user.id, date: state.selectedDate, text: t.text, category: t.category || 'todo', sort_key: now });
   }
+  sb.from('tasks').insert(rows).then(({ error }) => { if (error) toast('Sync error', error.message); });
   // adding tasks may break full bloom (now incomplete)
   const stats = dayStats(state.selectedDate);
   if (wasFull && stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
@@ -1443,19 +1597,79 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
   wrap.addEventListener('touchstart', () => { svg.style.transform = ''; }, { passive: true });
 })();
 
-// Seed welcome tasks on first run
-if (Object.keys(state.days).length === 0) {
-  const td = todayStr();
-  state.days[td] = { tasks: [
-    { id: 'w1', text: 'drink some water 💧',         done: false, createdAt: Date.now() - 3000 },
-    { id: 'w2', text: 'stretch for one tiny minute',  done: false, createdAt: Date.now() - 2000 },
-    { id: 'w3', text: 'text someone you love',        done: false, createdAt: Date.now() - 1000 },
-  ]};
-  save();
+/* ============================================================
+   Auth UI + bootstrap
+   ============================================================ */
+const authOverlay = document.getElementById('authOverlay');
+const signOutBtn  = document.getElementById('signOutBtn');
+
+function showAuth() {
+  authOverlay.classList.remove('hidden');
+  signOutBtn.classList.add('hidden');
+}
+function showApp() {
+  authOverlay.classList.add('hidden');
+  signOutBtn.classList.remove('hidden');
 }
 
-recomputeStreak();
+document.getElementById('authForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value.trim();
+  const btn = document.getElementById('authBtn');
+  const msg = document.getElementById('authMsg');
+  btn.disabled = true; btn.textContent = 'sending...';
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin + location.pathname },
+  });
+  btn.disabled = false; btn.textContent = 'Send magic link 💌';
+  msg.classList.remove('hidden');
+  if (error) {
+    msg.textContent = '✗ ' + error.message;
+    msg.style.color = '#C32A6B';
+  } else {
+    msg.textContent = '🩷 check your email for the magic link!';
+    msg.style.color = '#5C1336';
+  }
+});
+
+signOutBtn.addEventListener('click', async () => {
+  if (!confirm('Sign out? Your flowers stay safe in the cloud 🌷')) return;
+  await sb.auth.signOut();
+});
+
+sb.auth.onAuthStateChange(async (event, s) => {
+  if (s && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED')) {
+    if (session && session.user.id === s.user.id) return;
+    session = s;
+    showApp();
+    await loadFromCloud();
+    subscribeRealtime();
+  } else if (event === 'SIGNED_OUT') {
+    if (realtimeChan) { sb.removeChannel(realtimeChan); realtimeChan = null; }
+    session = null;
+    state.days = {}; state.bloomDates = []; state.streak = 0;
+    localStorage.removeItem('bloomlist:seeded');
+    renderAll();
+    showAuth();
+  }
+});
+
+// Initial render (empty) so layout is ready before cloud load
 renderAll();
+
+// Bootstrap: check existing session
+(async () => {
+  const { data: { session: s } } = await sb.auth.getSession();
+  if (s) {
+    session = s;
+    showApp();
+    await loadFromCloud();
+    subscribeRealtime();
+  } else {
+    showAuth();
+  }
+})();
 
 window.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {

@@ -283,13 +283,20 @@
       <svg viewBox="0 0 24 24" fill="currentColor" class="w-9 h-9 text-white"><path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z"/></svg>
     </div>
     <h2 class="display text-2xl font-bold text-blush-700">welcome to BloomList 🌷</h2>
-    <p class="text-sm text-blush-500 mt-2 mb-5 font-medium">sign in to sync your flowers across all your devices</p>
+    <p class="text-sm text-blush-500 mt-2 mb-5 font-medium">sync your flowers across all your devices</p>
+
+    <div class="cat-tabs mb-4 mx-auto">
+      <button type="button" class="cat-tab active" data-mode="signin">Sign In</button>
+      <button type="button" class="cat-tab" data-mode="signup">Create Account</button>
+    </div>
+
     <form id="authForm" class="space-y-3">
       <input id="authEmail" type="email" required autocomplete="email" class="pretty-input text-center" placeholder="your@email.com" />
-      <button type="submit" id="authBtn" class="pop-btn display text-white font-semibold rounded-2xl px-5 py-3 cursor-pointer w-full">Send magic link 💌</button>
+      <input id="authPass"  type="password" required minlength="6" autocomplete="current-password" class="pretty-input text-center" placeholder="password (6+ chars)" />
+      <button type="submit" id="authBtn" class="pop-btn display text-white font-semibold rounded-2xl px-5 py-3 cursor-pointer w-full">Sign in 🩷</button>
     </form>
     <p id="authMsg" class="text-xs mt-4 font-bold hidden"></p>
-    <p class="text-[11px] text-blush-400 mt-4 font-medium">no password needed · we'll email you a sign-in link</p>
+    <p class="text-[11px] text-blush-400 mt-4 font-medium">your data is private — only you can see your flowers 🌸</p>
   </div>
 </div>
 
@@ -1612,23 +1619,42 @@ function showApp() {
   signOutBtn.classList.remove('hidden');
 }
 
+let authMode = 'signin';
+document.querySelectorAll('[data-mode]').forEach(b => {
+  b.addEventListener('click', () => {
+    authMode = b.dataset.mode;
+    document.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === authMode));
+    document.getElementById('authBtn').textContent = authMode === 'signin' ? 'Sign in 🩷' : 'Create account 🌷';
+    document.getElementById('authPass').autocomplete = authMode === 'signin' ? 'current-password' : 'new-password';
+    document.getElementById('authMsg').classList.add('hidden');
+  });
+});
+
 document.getElementById('authForm').addEventListener('submit', async e => {
   e.preventDefault();
   const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPass').value;
   const btn = document.getElementById('authBtn');
   const msg = document.getElementById('authMsg');
-  btn.disabled = true; btn.textContent = 'sending...';
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: location.origin + location.pathname },
-  });
-  btn.disabled = false; btn.textContent = 'Send magic link 💌';
+  btn.disabled = true;
+  btn.textContent = authMode === 'signin' ? 'signing in...' : 'creating account...';
+
+  const { data, error } = authMode === 'signin'
+    ? await sb.auth.signInWithPassword({ email, password })
+    : await sb.auth.signUp({ email, password });
+
+  btn.disabled = false;
+  btn.textContent = authMode === 'signin' ? 'Sign in 🩷' : 'Create account 🌷';
   msg.classList.remove('hidden');
+
   if (error) {
     msg.textContent = '✗ ' + error.message;
     msg.style.color = '#C32A6B';
+  } else if (authMode === 'signup' && !data.session) {
+    msg.textContent = '✓ account created! check your email to confirm, then sign in';
+    msg.style.color = '#5C1336';
   } else {
-    msg.textContent = '🩷 check your email for the magic link!';
+    msg.textContent = '🩷 welcome!';
     msg.style.color = '#5C1336';
   }
 });

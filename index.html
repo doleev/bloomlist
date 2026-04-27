@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v8 · cloud sync</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v9 · cloud sync</p>
   </footer>
 
 </main>
@@ -509,10 +509,15 @@
    ============================================================ */
 const SUPABASE_URL = 'https://mjxknzuftjejxrdhqnxw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_27rC2Jb4RhM0HpLciDOxsQ_C2AeY7BR';
-// No-op cross-tab lock — we serialize our own auth-touching ops, so we
-// don't need supabase-js's navigator.locks coordination (which deadlocks
-// our concurrent poll + realtime + refresh).
-async function bloomlistLock(_name, _timeoutMs, fn) { return fn(); }
+// In-tab serializing lock. We chain auth-protected ops one-after-another
+// inside this tab. Crucially we DO NOT use navigator.locks — that's the
+// cross-tab coordinator that deadlocks when multiple tabs run concurrently.
+let _lockChain = Promise.resolve();
+function bloomlistLock(_name, _timeoutMs, fn) {
+  const next = _lockChain.then(() => fn());
+  _lockChain = next.catch(() => {});
+  return next;
+}
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
@@ -717,8 +722,11 @@ function recomputeBloomDates() {
 }
 
 function subscribeRealtime() {
+  // Realtime disabled — polling every 3s gives us reliable cross-device
+  // sync without the websocket+auth-coordination hazards. Re-enable later
+  // once sync is rock solid via polling alone.
+  return;
   if (realtimeChan) { sb.removeChannel(realtimeChan); realtimeChan = null; }
-  // Ensure realtime client is using the current auth token (RLS-aware delivery)
   try { sb.realtime.setAuth(session.access_token); } catch {}
 
   realtimeChan = sb.channel('tasks_' + session.user.id.replace(/-/g, ''))

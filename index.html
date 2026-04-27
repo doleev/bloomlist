@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v5 · cloud sync</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v6 · cloud sync</p>
   </footer>
 
 </main>
@@ -510,7 +510,14 @@
 const SUPABASE_URL = 'https://mjxknzuftjejxrdhqnxw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_27rC2Jb4RhM0HpLciDOxsQ_C2AeY7BR';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    // Bypass navigator.locks — its cross-tab lock fights with our poll+realtime+refresh
+    // and silently fails queries with "Lock ... was released because another request stole it"
+    lock: (_key, _timeout, fn) => fn(),
+  },
 });
 let session = null;
 let realtimeChan = null;

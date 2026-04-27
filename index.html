@@ -326,6 +326,9 @@
         <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-blush-600"><path d="M12 2l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 2z"/></svg>
         <span class="display font-semibold text-blush-700"><span id="bloomCount">0</span> blooms</span>
       </div>
+      <div id="syncDot" title="syncing..." class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center hidden" aria-hidden="true">
+        <span class="w-2.5 h-2.5 rounded-full bg-mint" style="background:#5DBE82; box-shadow: 0 0 0 4px rgba(93,190,130,0.25); animation: breathe 2s ease-in-out infinite;"></span>
+      </div>
       <button id="signOutBtn" aria-label="Sign out" title="Sign out" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors hidden">
         <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600"><path d="M15 12H3m0 0l4-4m-4 4l4 4M21 5v14a2 2 0 01-2 2h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -561,19 +564,17 @@ async function cloudDeleteWhere(filter) {
   if (error) toast('Sync error', error.message);
 }
 
+// Tasks that have a local mutation in flight — protect them from being
+// stomped by a poll that hasn't yet seen our write
+const pendingIds = new Set();
+
 async function loadFromCloud() {
-  const { data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id);
-  if (error) { toast('Load error', error.message); return; }
-  state.days = {};
-  for (const row of data) hydrateRow(row);
-  for (const date in state.days) {
-    state.days[date].tasks.sort((a, b) => b.createdAt - a.createdAt);
-  }
-  recomputeBloomDates();
-  recomputeStreak();
+  // initial bootstrap or full resync
+  await syncFromCloud(true);
 
   // Seed welcome tasks once if account is brand new
-  if (data.length === 0 && !localStorage.getItem('bloomlist:seeded')) {
+  const isEmpty = Object.values(state.days).every(d => d.tasks.length === 0);
+  if (isEmpty && !localStorage.getItem('bloomlist:seeded')) {
     localStorage.setItem('bloomlist:seeded', '1');
     const td = todayStr();
     const seeds = [
@@ -585,10 +586,83 @@ async function loadFromCloud() {
       const id = crypto.randomUUID();
       const day = getDay(td);
       day.tasks.unshift({ id, text: s.text, done: false, createdAt: Date.now(), doneAt: null, category: s.category });
-      cloudInsert({ id, user_id: session.user.id, date: td, text: s.text, category: s.category, sort_key: Date.now() });
+      pendingIds.add(id);
+      cloudInsert({ id, user_id: session.user.id, date: td, text: s.text, category: s.category, sort_key: Date.now() })
+        .finally(() => pendingIds.delete(id));
     }
+    renderAll();
   }
+}
+
+// Diff-based sync — never wipes local pending tasks, server is source of truth otherwise
+async function syncFromCloud(initial = false) {
+  if (!session) return;
+  const { data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id);
+  if (error) { console.warn('[bloomlist] sync error', error); return; }
+
+  const serverById = new Map(data.map(r => [r.id, r]));
+
+  // Walk every local task: update from server, drop if missing (unless pending)
+  for (const date in state.days) {
+    state.days[date].tasks = state.days[date].tasks.filter(t => {
+      const sr = serverById.get(t.id);
+      if (sr) {
+        if (sr.date !== date) return false; // moved days: drop here, will re-add below
+        t.text     = sr.text;
+        t.done     = sr.done;
+        t.doneAt   = sr.done_at ? new Date(sr.done_at).getTime() : null;
+        t.category = sr.category;
+        t.createdAt = sr.sort_key;
+        serverById.delete(t.id);
+        return true;
+      }
+      return pendingIds.has(t.id); // unsynced local task — keep
+    });
+  }
+
+  // Anything left in serverById is new to us → insert
+  for (const [id, sr] of serverById) {
+    const day = getDay(sr.date);
+    day.tasks.unshift({
+      id, text: sr.text, done: sr.done,
+      doneAt: sr.done_at ? new Date(sr.done_at).getTime() : null,
+      createdAt: sr.sort_key, category: sr.category,
+    });
+  }
+
+  // Re-sort each day
+  for (const date in state.days) {
+    state.days[date].tasks.sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return b.createdAt - a.createdAt;
+    });
+  }
+
+  recomputeBloomDates();
+  recomputeStreak();
+  setSyncStamp();
   renderAll();
+}
+
+let lastSyncTs = 0;
+function setSyncStamp() { lastSyncTs = Date.now(); updateSyncIndicator(); }
+function updateSyncIndicator() {
+  const el = document.getElementById('syncDot');
+  if (!el) return;
+  if (!session) { el.title = 'signed out'; return; }
+  const ago = Math.round((Date.now() - lastSyncTs) / 1000);
+  el.title = lastSyncTs ? `synced ${ago}s ago` : 'syncing...';
+}
+setInterval(updateSyncIndicator, 1000);
+
+// Poll every 3 seconds while the tab is visible — bullet-proof fallback
+// if realtime drops or a network has weird websocket behavior
+let pollTimer = null;
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && session) syncFromCloud();
+  }, 3000);
 }
 
 function hydrateRow(row) {
@@ -655,15 +729,11 @@ function removeFromState(id, date) {
   }
 }
 
-// Refresh from cloud when the tab regains focus or comes back online —
-// a safety net in case realtime briefly drops.
-function fullResync() {
-  if (session) loadFromCloud();
-}
-window.addEventListener('focus',  fullResync);
-window.addEventListener('online', fullResync);
+// Refresh from cloud when the tab regains focus or comes back online
+window.addEventListener('focus',  () => session && syncFromCloud());
+window.addEventListener('online', () => session && syncFromCloud());
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') fullResync();
+  if (document.visibilityState === 'visible' && session) syncFromCloud();
 });
 
 /* ------------------------ Date helpers ------------------------ */
@@ -1351,12 +1421,13 @@ function addTask(text) {
   });
   pluck();
   save(); renderTasks(); renderPlant(); renderWeek();
+  pendingIds.add(id);
   cloudInsert({
     id, user_id: session.user.id,
     date: state.selectedDate,
     text, category: state.category,
     sort_key: now,
-  });
+  }).finally(() => pendingIds.delete(id));
 }
 
 function migrateTasks(day) {
@@ -1394,7 +1465,9 @@ function toggleTask(id, btnEl) {
 
   t.done = !t.done;
   t.doneAt = t.done ? Date.now() : null;
-  cloudUpdate(id, { done: t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null });
+  pendingIds.add(id);
+  cloudUpdate(id, { done: t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null })
+    .finally(() => pendingIds.delete(id));
 
   const stats = dayStats(state.selectedDate);
   const isFull = stats.pct === 1 && stats.total > 0;
@@ -1433,7 +1506,8 @@ function deleteTask(id) {
   const day = getDay(state.selectedDate);
   const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
   day.tasks = day.tasks.filter(t => t.id !== id);
-  cloudDelete(id);
+  pendingIds.add(id);
+  cloudDelete(id).finally(() => pendingIds.delete(id));
   const stats = dayStats(state.selectedDate);
   const isFull = stats.pct === 1 && stats.total > 0;
   if (!wasFull && isFull) {
@@ -1451,7 +1525,10 @@ function clearDone() {
   const toDelete = day.tasks.filter(t => t.done && t.category === state.category);
   if (toDelete.length === 0) return;
   day.tasks = day.tasks.filter(t => !(t.done && t.category === state.category));
-  for (const t of toDelete) cloudDelete(t.id);
+  for (const t of toDelete) {
+    pendingIds.add(t.id);
+    cloudDelete(t.id).finally(() => pendingIds.delete(t.id));
+  }
   pluck();
   // clearing done can only reduce completion; if was full and we just removed all done ones, total now equals undone count, possibly still 0% bloom
   const stats = dayStats(state.selectedDate);
@@ -1480,8 +1557,12 @@ function copyYesterday() {
       category: t.category || 'todo',
     });
     rows.push({ id, user_id: session.user.id, date: state.selectedDate, text: t.text, category: t.category || 'todo', sort_key: now });
+    pendingIds.add(id);
   }
-  sb.from('tasks').insert(rows).then(({ error }) => { if (error) toast('Sync error', error.message); });
+  sb.from('tasks').insert(rows).then(({ error }) => {
+    if (error) toast('Sync error', error.message);
+    for (const r of rows) pendingIds.delete(r.id);
+  });
   // adding tasks may break full bloom (now incomplete)
   const stats = dayStats(state.selectedDate);
   if (wasFull && stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
@@ -1642,10 +1723,13 @@ const signOutBtn  = document.getElementById('signOutBtn');
 function showAuth() {
   authOverlay.classList.remove('hidden');
   signOutBtn.classList.add('hidden');
+  document.getElementById('syncDot')?.classList.add('hidden');
 }
 function showApp() {
   authOverlay.classList.add('hidden');
   signOutBtn.classList.remove('hidden');
+  document.getElementById('syncDot')?.classList.remove('hidden');
+  document.getElementById('syncDot')?.classList.add('flex');
 }
 
 let authMode = 'signin';
@@ -1723,8 +1807,10 @@ sb.auth.onAuthStateChange(async (event, s) => {
     updateGreeting();
     await loadFromCloud();
     subscribeRealtime();
+    startPolling();
   } else if (event === 'SIGNED_OUT') {
     if (realtimeChan) { sb.removeChannel(realtimeChan); realtimeChan = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     session = null;
     state.days = {}; state.bloomDates = []; state.streak = 0;
     localStorage.removeItem('bloomlist:seeded');
@@ -1746,6 +1832,7 @@ renderAll();
     updateGreeting();
     await loadFromCloud();
     subscribeRealtime();
+    startPolling();
   } else {
     showAuth();
   }

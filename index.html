@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <title>BloomList — grow something lovely</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -326,9 +329,9 @@
         <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-blush-600"><path d="M12 2l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 2z"/></svg>
         <span class="display font-semibold text-blush-700"><span id="bloomCount">0</span> blooms</span>
       </div>
-      <div id="syncDot" title="syncing..." class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center hidden" aria-hidden="true">
-        <span class="w-2.5 h-2.5 rounded-full bg-mint" style="background:#5DBE82; box-shadow: 0 0 0 4px rgba(93,190,130,0.25); animation: breathe 2s ease-in-out infinite;"></span>
-      </div>
+      <button id="syncDot" title="tap to sync now" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center hidden cursor-pointer hover:bg-white transition-colors">
+        <span id="syncDotInner" class="w-2.5 h-2.5 rounded-full" style="background:#5DBE82; box-shadow: 0 0 0 4px rgba(93,190,130,0.25); animation: breathe 2s ease-in-out infinite;"></span>
+      </button>
       <button id="signOutBtn" aria-label="Sign out" title="Sign out" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors hidden">
         <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600"><path d="M15 12H3m0 0l4-4m-4 4l4 4M21 5v14a2 2 0 01-2 2h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -478,6 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v5 · cloud sync</p>
   </footer>
 
 </main>
@@ -654,6 +658,19 @@ function updateSyncIndicator() {
   el.title = lastSyncTs ? `synced ${ago}s ago` : 'syncing...';
 }
 setInterval(updateSyncIndicator, 1000);
+
+// Tap sync indicator to force-sync immediately
+document.getElementById('syncDot').addEventListener('click', () => {
+  if (!session) return;
+  const inner = document.getElementById('syncDotInner');
+  inner.style.background = '#FFD66B';
+  inner.style.boxShadow = '0 0 0 4px rgba(255,214,107,0.3)';
+  syncFromCloud().finally(() => {
+    inner.style.background = '#5DBE82';
+    inner.style.boxShadow = '0 0 0 4px rgba(93,190,130,0.25)';
+    toast('Synced 🌷', 'pulled latest from the cloud');
+  });
+});
 
 // Poll every 3 seconds while the tab is visible — bullet-proof fallback
 // if realtime drops or a network has weird websocket behavior

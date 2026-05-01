@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.2 · catch thrown rejections</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.3 · timeout + decoupled polling</p>
   </footer>
 
 </main>
@@ -640,11 +640,23 @@ async function loadFromCloud() {
 }
 
 // Diff-based sync — never wipes local pending tasks, server is source of truth otherwise
+const SYNC_TIMEOUT_MS = 8000;
+function withTimeout(p, ms, label) {
+  return Promise.race([
+    p,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)),
+  ]);
+}
 async function syncFromCloud(initial = false) {
   if (!session) return;
+  console.log('[bloomlist] sync start', { initial, ts: new Date().toISOString() });
   let data, error;
   try {
-    ({ data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id));
+    ({ data, error } = await withTimeout(
+      sb.from('tasks').select('*').eq('user_id', session.user.id),
+      SYNC_TIMEOUT_MS,
+      'select tasks',
+    ));
   } catch (e) {
     reportCloudError('poll', e);
     return;
@@ -654,6 +666,7 @@ async function syncFromCloud(initial = false) {
     return;
   }
   lastSyncError = null;
+  console.log('[bloomlist] sync got', data?.length ?? 0, 'rows');
 
   const serverById = new Map(data.map(r => [r.id, r]));
 
@@ -725,14 +738,25 @@ setInterval(updateSyncIndicator, 1000);
 
 // Expose a console diagnostic so we can introspect from the field
 window.bloomlistDiagnose = () => ({
-  build: 'v10.1',
+  build: 'v10.3',
   session: session ? { user_id: session.user.id, email: session.user.email, expires_at: session.expires_at } : null,
   state_days: Object.fromEntries(Object.entries(state.days).map(([d, v]) => [d, v.tasks.length])),
   pending: [...pendingIds],
   lastSyncTs: lastSyncTs ? new Date(lastSyncTs).toISOString() : null,
   lastSyncError,
   pollTimerActive: !!pollTimer,
+  now: new Date().toISOString(),
 });
+// One-shot manual probe to test if a single SELECT round-trips at all
+window.bloomlistProbe = async () => {
+  const t0 = performance.now();
+  try {
+    const r = await withTimeout(sb.from('tasks').select('id').limit(1), 6000, 'probe');
+    return { ok: true, ms: Math.round(performance.now() - t0), error: r.error || null, rows: r.data?.length ?? 0 };
+  } catch (e) {
+    return { ok: false, ms: Math.round(performance.now() - t0), error: String(e) };
+  }
+};
 
 // Tap sync indicator to force-sync immediately
 document.getElementById('syncDot').addEventListener('click', () => {
@@ -1894,15 +1918,21 @@ signOutBtn.addEventListener('click', async () => {
   await sb.auth.signOut();
 });
 
-sb.auth.onAuthStateChange(async (event, s) => {
+// startPolling MUST run regardless of whether initial sync succeeds. Previously a stuck initial
+// sync would await forever and skip startPolling, leaving the user with no recovery loop.
+function bootSyncedSession(s) {
+  if (session && session.user.id === s.user.id) return;
+  session = s;
+  showApp();
+  updateGreeting();
+  startPolling();        // start the recovery loop FIRST so a hung initial sync is recoverable
+  loadFromCloud().catch(e => reportCloudError('bootstrap', e));
+  subscribeRealtime();
+}
+sb.auth.onAuthStateChange((event, s) => {
+  console.log('[bloomlist] auth event', event, !!s);
   if (s && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED')) {
-    if (session && session.user.id === s.user.id) return;
-    session = s;
-    showApp();
-    updateGreeting();
-    await loadFromCloud();
-    subscribeRealtime();
-    startPolling();
+    bootSyncedSession(s);
   } else if (event === 'SIGNED_OUT') {
     if (realtimeChan) { sb.removeChannel(realtimeChan); realtimeChan = null; }
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -1920,15 +1950,12 @@ renderAll();
 
 // Bootstrap: check existing session
 (async () => {
-  const { data: { session: s } } = await sb.auth.getSession();
-  if (s) {
-    session = s;
-    showApp();
-    updateGreeting();
-    await loadFromCloud();
-    subscribeRealtime();
-    startPolling();
-  } else {
+  try {
+    const { data: { session: s } } = await withTimeout(sb.auth.getSession(), 6000, 'getSession');
+    if (s) bootSyncedSession(s);
+    else showAuth();
+  } catch (e) {
+    reportCloudError('bootstrap-getSession', e);
     showAuth();
   }
 })();

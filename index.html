@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v9 · cloud sync</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10 · cloud sync</p>
   </footer>
 
 </main>
@@ -522,10 +522,10 @@ function bloomlistLock(_name, _timeoutMs, fn) {
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     persistSession: true,
-    autoRefreshToken: false,    // we don't need 1h+ sessions, and this is the worst cross-tab fighter
+    autoRefreshToken: true,     // refresh JWT before 1h expiry; without this every device silently 401s after an hour
     detectSessionInUrl: false,  // not using OAuth / magic links
     storageKey: 'sb-bloomlist-auth',
-    lock: bloomlistLock,
+    lock: bloomlistLock,        // in-tab serialization keeps refreshes from racing
   },
 });
 let session = null;
@@ -543,8 +543,8 @@ function load() {
   return {
     days: {},          // 'YYYY-MM-DD' -> { tasks: [...] }   (built from cloud)
     bloomDates: [],    // derived from days
-    selectedDate: ui.selectedDate || todayStr(),
-    weekAnchor:   ui.weekAnchor   || todayStr(),
+    selectedDate: todayStr(),  // always land on today; navigation within session is fine but a fresh load should jump to today
+    weekAnchor:   todayStr(),
     streak: 0,
     bestStreak: 0,
     muted:    ui.muted    ?? false,
@@ -554,9 +554,9 @@ function load() {
   };
 }
 function save() {
-  // persist UI prefs only — data lives in Supabase
+  // persist UI prefs only — data lives in Supabase. selectedDate/weekAnchor are intentionally
+  // not persisted so reopening the app always jumps to today.
   const ui = {
-    selectedDate: state.selectedDate, weekAnchor: state.weekAnchor,
     muted: state.muted, filter: state.filter,
     category: state.category, calView: state.calView,
   };

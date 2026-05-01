@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10 · cloud sync</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.1 · sync diagnostics</p>
   </footer>
 
 </main>
@@ -565,23 +565,35 @@ function save() {
 
 /* Cloud-side mutations — called by user actions, RLS enforces ownership.
    Local state is updated optimistically; realtime patches reconcile if needed. */
+let lastSyncError = null;  // exposed so the user can see what's wrong instead of a silent console.warn
+
+function reportCloudError(op, error) {
+  lastSyncError = { op, code: error.code, message: error.message, hint: error.hint, ts: Date.now() };
+  console.error('[bloomlist]', op, 'failed:', error);
+  toast('Sync ' + op + ' failed', `${error.code || ''} ${error.message || error}`.trim());
+  updateSyncIndicator();
+}
 async function cloudInsert(row) {
   const { error } = await sb.from('tasks').insert(row);
-  if (error) toast('Sync error', error.message);
+  if (error) reportCloudError('insert', error);
+  else { lastSyncError = null; updateSyncIndicator(); }
 }
 async function cloudUpdate(id, patch) {
   const { error } = await sb.from('tasks').update(patch).eq('id', id);
-  if (error) toast('Sync error', error.message);
+  if (error) reportCloudError('update', error);
+  else { lastSyncError = null; updateSyncIndicator(); }
 }
 async function cloudDelete(id) {
   const { error } = await sb.from('tasks').delete().eq('id', id);
-  if (error) toast('Sync error', error.message);
+  if (error) reportCloudError('delete', error);
+  else { lastSyncError = null; updateSyncIndicator(); }
 }
 async function cloudDeleteWhere(filter) {
   let q = sb.from('tasks').delete();
   for (const [k, v] of Object.entries(filter)) q = q.eq(k, v);
   const { error } = await q;
-  if (error) toast('Sync error', error.message);
+  if (error) reportCloudError('bulk-delete', error);
+  else { lastSyncError = null; updateSyncIndicator(); }
 }
 
 // Tasks that have a local mutation in flight — protect them from being
@@ -618,7 +630,11 @@ async function loadFromCloud() {
 async function syncFromCloud(initial = false) {
   if (!session) return;
   const { data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id);
-  if (error) { console.warn('[bloomlist] sync error', error); return; }
+  if (error) {
+    reportCloudError('poll', error);
+    return;
+  }
+  lastSyncError = null;
 
   const serverById = new Map(data.map(r => [r.id, r]));
 
@@ -669,11 +685,35 @@ function setSyncStamp() { lastSyncTs = Date.now(); updateSyncIndicator(); }
 function updateSyncIndicator() {
   const el = document.getElementById('syncDot');
   if (!el) return;
+  const inner = document.getElementById('syncDotInner');
   if (!session) { el.title = 'signed out'; return; }
   const ago = Math.round((Date.now() - lastSyncTs) / 1000);
-  el.title = lastSyncTs ? `synced ${ago}s ago` : 'syncing...';
+  if (lastSyncError) {
+    if (inner) {
+      inner.style.background = '#EC4080';
+      inner.style.boxShadow = '0 0 0 4px rgba(236,64,128,0.3)';
+    }
+    el.title = `sync FAILED · ${lastSyncError.op} · ${lastSyncError.code || ''} ${lastSyncError.message || ''} (tap to retry)`;
+  } else {
+    if (inner) {
+      inner.style.background = '#5DBE82';
+      inner.style.boxShadow = '0 0 0 4px rgba(93,190,130,0.25)';
+    }
+    el.title = lastSyncTs ? `synced ${ago}s ago` : 'syncing...';
+  }
 }
 setInterval(updateSyncIndicator, 1000);
+
+// Expose a console diagnostic so we can introspect from the field
+window.bloomlistDiagnose = () => ({
+  build: 'v10.1',
+  session: session ? { user_id: session.user.id, email: session.user.email, expires_at: session.expires_at } : null,
+  state_days: Object.fromEntries(Object.entries(state.days).map(([d, v]) => [d, v.tasks.length])),
+  pending: [...pendingIds],
+  lastSyncTs: lastSyncTs ? new Date(lastSyncTs).toISOString() : null,
+  lastSyncError,
+  pollTimerActive: !!pollTimer,
+});
 
 // Tap sync indicator to force-sync immediately
 document.getElementById('syncDot').addEventListener('click', () => {

@@ -481,7 +481,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.1 · sync diagnostics</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.2 · catch thrown rejections</p>
   </footer>
 
 </main>
@@ -568,32 +568,45 @@ function save() {
 let lastSyncError = null;  // exposed so the user can see what's wrong instead of a silent console.warn
 
 function reportCloudError(op, error) {
-  lastSyncError = { op, code: error.code, message: error.message, hint: error.hint, ts: Date.now() };
+  // error may be a plain object from supabase ({code, message}), an Error from a thrown rejection,
+  // or anything else fetch can spit out. Coerce to a stable shape.
+  const code    = error?.code    || error?.status || error?.name || '';
+  const message = error?.message || String(error);
+  const hint    = error?.hint    || error?.details || (error?.stack ? String(error.stack).split('\n')[0] : '');
+  lastSyncError = { op, code, message, hint, ts: Date.now() };
   console.error('[bloomlist]', op, 'failed:', error);
-  toast('Sync ' + op + ' failed', `${error.code || ''} ${error.message || error}`.trim());
+  toast('Sync ' + op + ' failed', `${code} ${message}`.trim());
   updateSyncIndicator();
 }
+// All Supabase calls are wrapped — a thrown rejection (network, CORS, lock deadlock) needs to surface
+// the same way as a returned {error}, otherwise sync silently dies and the user just sees stale state.
+async function safeRun(op, fn) {
+  try {
+    const res = await fn();
+    if (res && res.error) { reportCloudError(op, res.error); return res; }
+    lastSyncError = null;
+    updateSyncIndicator();
+    return res;
+  } catch (e) {
+    reportCloudError(op, e);
+    return { error: e };
+  }
+}
 async function cloudInsert(row) {
-  const { error } = await sb.from('tasks').insert(row);
-  if (error) reportCloudError('insert', error);
-  else { lastSyncError = null; updateSyncIndicator(); }
+  return safeRun('insert', () => sb.from('tasks').insert(row));
 }
 async function cloudUpdate(id, patch) {
-  const { error } = await sb.from('tasks').update(patch).eq('id', id);
-  if (error) reportCloudError('update', error);
-  else { lastSyncError = null; updateSyncIndicator(); }
+  return safeRun('update', () => sb.from('tasks').update(patch).eq('id', id));
 }
 async function cloudDelete(id) {
-  const { error } = await sb.from('tasks').delete().eq('id', id);
-  if (error) reportCloudError('delete', error);
-  else { lastSyncError = null; updateSyncIndicator(); }
+  return safeRun('delete', () => sb.from('tasks').delete().eq('id', id));
 }
 async function cloudDeleteWhere(filter) {
-  let q = sb.from('tasks').delete();
-  for (const [k, v] of Object.entries(filter)) q = q.eq(k, v);
-  const { error } = await q;
-  if (error) reportCloudError('bulk-delete', error);
-  else { lastSyncError = null; updateSyncIndicator(); }
+  return safeRun('bulk-delete', () => {
+    let q = sb.from('tasks').delete();
+    for (const [k, v] of Object.entries(filter)) q = q.eq(k, v);
+    return q;
+  });
 }
 
 // Tasks that have a local mutation in flight — protect them from being
@@ -629,7 +642,13 @@ async function loadFromCloud() {
 // Diff-based sync — never wipes local pending tasks, server is source of truth otherwise
 async function syncFromCloud(initial = false) {
   if (!session) return;
-  const { data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id);
+  let data, error;
+  try {
+    ({ data, error } = await sb.from('tasks').select('*').eq('user_id', session.user.id));
+  } catch (e) {
+    reportCloudError('poll', e);
+    return;
+  }
   if (error) {
     reportCloudError('poll', error);
     return;

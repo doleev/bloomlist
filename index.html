@@ -2,11 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>BloomList — grow something lovely</title>
+
+<!-- iOS: Add to Home Screen runs the page as a standalone PWA. apple-mobile-web-app-capable
+     drops the Safari chrome; status-bar-style + theme-color tune the top inset; the touch
+     icon is what shows on the home screen. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="BloomList" />
+<meta name="theme-color" content="#EC4080" />
+<meta name="mobile-web-app-capable" content="yes" />
+<link rel="apple-touch-icon" href="/icon-180.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+<link rel="manifest" href="/manifest.json" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -66,6 +79,10 @@
                linear-gradient(180deg, #FFF7FA 0%, #FFF0F5 100%);
   }
   html, body { height: 100%; }
+  /* iOS PWA: when launched from Home Screen the page extends behind the notch and home
+     indicator. Push the main column inward so the header/footer aren't clipped. env() is
+     0 in regular browsers so this is a no-op there. */
+  body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   body {
     font-family: 'Nunito', system-ui, sans-serif;
     background: var(--grad-bg);
@@ -500,7 +517,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v11.0 · shared lists 🛒</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v11.1 · iOS home-screen ready 📱</p>
   </footer>
 
 </main>

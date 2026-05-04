@@ -349,6 +349,7 @@
       <button id="syncDot" title="tap to sync now" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center hidden cursor-pointer hover:bg-white transition-colors">
         <span id="syncDotInner" class="w-2.5 h-2.5 rounded-full" style="background:#5DBE82; box-shadow: 0 0 0 4px rgba(93,190,130,0.25); animation: breathe 2s ease-in-out infinite;"></span>
       </button>
+      <button id="pushBtn" class="glass card-shadow rounded-2xl px-3 py-2 cursor-pointer hover:bg-white transition-colors hidden text-blush-700 font-semibold text-xs">🔔 turn on notifications</button>
       <button id="signOutBtn" aria-label="Sign out" title="Sign out" class="glass card-shadow rounded-2xl w-11 h-11 flex items-center justify-center cursor-pointer hover:bg-white transition-colors hidden">
         <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-blush-600"><path d="M15 12H3m0 0l4-4m-4 4l4 4M21 5v14a2 2 0 01-2 2h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -519,7 +520,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v11.2 · auto-carryover ↩</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v11.3 · push notifications 🔔</p>
   </footer>
 
 </main>
@@ -693,6 +694,116 @@ async function cloudLeaveList(listId) {
   if (r?.error) return false;
   await loadLists();
   return true;
+}
+
+// ---------- Push notifications ----------
+// VAPID public key — paired with the private key sitting in the notify-list-add edge function.
+// Public is fine to ship to the client; that's what it's for.
+const VAPID_PUBLIC_KEY = 'BOB4Bfc2LpNO0jBt2Z79f_I-i52Ib2Nb0wirW9OTwc0c4sanb8Avhxdc_iPnv7iPuuQXQt-HjQ5XdMA6yo027AA';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+let pushRegistration = null;       // ServiceWorkerRegistration once ready
+let currentPushSub = null;         // Current PushSubscription on this device (null if not subscribed)
+
+async function ensureServiceWorker() {
+  if (!pushSupported()) return null;
+  if (pushRegistration) return pushRegistration;
+  try {
+    pushRegistration = await navigator.serviceWorker.register('/sw.js');
+    // Wait for it to be active so getSubscription/subscribe work.
+    if (pushRegistration.installing || pushRegistration.waiting) {
+      await navigator.serviceWorker.ready;
+    }
+    currentPushSub = await pushRegistration.pushManager.getSubscription();
+    return pushRegistration;
+  } catch (e) {
+    console.warn('[bloomlist] sw register failed', e);
+    return null;
+  }
+}
+
+async function pushSubscribe() {
+  if (!pushSupported() || !session) return false;
+  const reg = await ensureServiceWorker();
+  if (!reg) return false;
+
+  if (Notification.permission === 'denied') {
+    toast('Notifications blocked', "iOS Settings → Notifications → BloomList → allow");
+    return false;
+  }
+  if (Notification.permission === 'default') {
+    const result = await Notification.requestPermission();
+    if (result !== 'granted') return false;
+  }
+
+  // Subscribe (or reuse the existing PushSubscription) and persist the keys to Supabase.
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+  }
+  currentPushSub = sub;
+
+  const json = sub.toJSON();
+  const r = await safeRun('push-subscribe', () => sb.from('push_subscriptions').upsert({
+    user_id:    session.user.id,
+    endpoint:   sub.endpoint,
+    p256dh:     json.keys.p256dh,
+    auth:       json.keys.auth,
+    user_agent: navigator.userAgent.slice(0, 200),
+  }, { onConflict: 'user_id,endpoint' }));
+  if (r?.error) return false;
+
+  toast('Notifications on 🔔', "you'll get a ping when someone adds to a shared list");
+  renderPushButton();
+  return true;
+}
+
+async function pushUnsubscribe() {
+  if (!currentPushSub || !session) { renderPushButton(); return false; }
+  const endpoint = currentPushSub.endpoint;
+  try { await currentPushSub.unsubscribe(); } catch {}
+  currentPushSub = null;
+  await safeRun('push-unsubscribe', () =>
+    sb.from('push_subscriptions').delete().eq('user_id', session.user.id).eq('endpoint', endpoint));
+  toast('Notifications off', 'this device will stop pinging');
+  renderPushButton();
+  return true;
+}
+
+// Toggle button in the header. Hidden when push isn't supported (older Safari, etc.) or
+// when the user is signed out.
+function renderPushButton() {
+  const btn = document.getElementById('pushBtn');
+  if (!btn) return;
+  if (!pushSupported() || !session) { btn.classList.add('hidden'); return; }
+  btn.classList.remove('hidden');
+  if (Notification.permission === 'denied') {
+    btn.textContent = '🔕 notifications blocked';
+    btn.title = 'Open iOS Settings → Notifications → BloomList to re-enable';
+    return;
+  }
+  if (currentPushSub) {
+    btn.textContent = '🔔 notifications on';
+    btn.title = 'Tap to turn off notifications on this device';
+  } else {
+    btn.textContent = '🔔 turn on notifications';
+    btn.title = 'Get a ping when someone adds to a shared list (10-min cooldown)';
+  }
 }
 
 // Tasks that have a local mutation in flight — protect them from being
@@ -1735,6 +1846,7 @@ function renderAll() {
   renderWeek(); renderMonth(); applyCalView(); updateMonthLabel();
   renderPlant(); renderTasks(); renderGarden(); renderStats(); renderFilters(); renderMute();
   renderListSwitcher();
+  renderPushButton();
 }
 
 // Toggle the parts of the UI that only make sense on the personal list. Calendar, plant,
@@ -2095,6 +2207,36 @@ document.getElementById('muteBtn').addEventListener('click', () => {
   save(); renderMute();
 });
 
+// Push notification toggle
+document.getElementById('pushBtn').addEventListener('click', async () => {
+  if (currentPushSub) return pushUnsubscribe();
+  return pushSubscribe();
+});
+
+// Deep-link routing: when a notification is tapped, the SW posts {type:'navigate', url}
+// to focused clients. Pull ?list=<id> off the URL and switch to that list.
+function handleListDeepLink(url) {
+  try {
+    const u = new URL(url, location.origin);
+    const listId = u.searchParams.get('list');
+    if (!listId) return;
+    if (state.lists.find(l => l.id === listId)) {
+      state.currentListId = listId;
+      state.selectedDate = todayStr();
+      renderAll();
+    }
+    // Strip ?list= so a refresh doesn't re-route
+    if (location.search.includes('list=')) {
+      const clean = new URL(location.href);
+      clean.searchParams.delete('list');
+      history.replaceState(null, '', clean.toString());
+    }
+  } catch {}
+}
+navigator.serviceWorker?.addEventListener('message', e => {
+  if (e.data?.type === 'navigate' && e.data.url) handleListDeepLink(e.data.url);
+});
+
 /* ============================================================
    List switcher / sharing
    ============================================================ */
@@ -2357,7 +2499,11 @@ function bootSyncedSession(s) {
   loadFromCloud()
     .then(() => loadLists())
     .then(() => consumePendingInviteIfAny())
+    .then(() => handleListDeepLink(location.href))   // cold-start ?list=<id>
     .catch(e => reportCloudError('bootstrap', e));
+  // Register the SW so the push button reflects the right state, but don't auto-prompt
+  // for permission — the user has to tap the button (iOS won't show the prompt otherwise).
+  ensureServiceWorker().then(renderPushButton);
   subscribeRealtime();
 }
 sb.auth.onAuthStateChange((event, s) => {

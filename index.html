@@ -348,8 +348,27 @@
     </div>
   </header>
 
+  <!-- List switcher (private + shared) -->
+  <section id="listSwitcherWrap" class="mb-4 hidden">
+    <div class="relative inline-block">
+      <button id="listSwitcherBtn" class="glass card-shadow rounded-2xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-white transition-colors">
+        <span id="listSwitcherIcon">🌷</span>
+        <span id="listSwitcherName" class="display font-semibold text-blush-700">personal</span>
+        <span id="listSwitcherMembers" class="text-xs text-blush-500 hidden"></span>
+        <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4 text-blush-600"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div id="listSwitcherMenu" class="absolute left-0 top-full mt-2 w-72 glass card-shadow rounded-2xl p-2 hidden z-30"></div>
+    </div>
+    <button id="shareListBtn" class="glass card-shadow rounded-2xl px-4 py-2.5 ml-2 cursor-pointer hover:bg-white transition-colors hidden text-blush-700 font-semibold text-sm">
+      🔗 share
+    </button>
+    <button id="leaveListBtn" class="glass card-shadow rounded-2xl px-3 py-2.5 ml-2 cursor-pointer hover:bg-white transition-colors hidden text-blush-500 text-xs font-medium" title="Leave this list">
+      leave
+    </button>
+  </section>
+
   <!-- Calendar -->
-  <section class="glass card-shadow rounded-3xl p-4 sm:p-5 mb-6">
+  <section id="calendarSection" class="glass card-shadow rounded-3xl p-4 sm:p-5 mb-6">
     <div class="flex items-center justify-between mb-3 px-1 gap-3 flex-wrap">
       <div class="flex items-center gap-2">
         <button id="prevPeriod" aria-label="Previous" class="cursor-pointer w-9 h-9 rounded-full bg-white hover:bg-blush-100 border-2 border-blush-200 hover:border-blush-400 flex items-center justify-center text-blush-700 transition-all">
@@ -384,10 +403,10 @@
   </section>
 
   <!-- Hero grid: plant + tasks -->
-  <section class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+  <section id="heroGrid" class="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
     <!-- Plant card -->
-    <div class="lg:col-span-2 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col items-center text-center relative overflow-hidden">
+    <div id="plantCard" class="lg:col-span-2 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col items-center text-center relative overflow-hidden">
       <div class="absolute inset-0 opacity-50 pointer-events-none" style="background: radial-gradient(circle at 50% 30%, #FFE4EC 0%, transparent 60%);"></div>
 
       <p class="text-xs font-bold uppercase tracking-widest text-blush-500 relative z-10">Today's flower</p>
@@ -414,10 +433,10 @@
     </div>
 
     <!-- Tasks card -->
-    <div class="lg:col-span-3 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col">
+    <div id="tasksCard" class="lg:col-span-3 glass card-shadow rounded-3xl p-6 sm:p-8 flex flex-col">
 
       <!-- Category tabs -->
-      <div class="cat-tabs mb-4 self-start">
+      <div id="categoryTabs" class="cat-tabs mb-4 self-start">
         <button class="cat-tab active" data-cat="todo">
           <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M12 21s-7-4.5-7-10a5 5 0 019-3 5 5 0 019 3c0 5.5-7 10-7 10z" fill="currentColor"/></svg>
           To-Do
@@ -481,7 +500,7 @@
 
   <footer class="text-center mt-8 mb-4">
     <p class="text-xs text-blush-500 font-medium">made with 🩷 for you. every task is a petal.</p>
-    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v10.3 · timeout + decoupled polling</p>
+    <p class="text-[10px] text-blush-400 mt-1 font-medium">build v11.0 · shared lists 🛒</p>
   </footer>
 
 </main>
@@ -541,8 +560,8 @@ function load() {
     if (raw) ui = JSON.parse(raw);
   } catch {}
   return {
-    days: {},          // 'YYYY-MM-DD' -> { tasks: [...] }   (built from cloud)
-    bloomDates: [],    // derived from days
+    days: {},          // 'YYYY-MM-DD' -> { tasks: [...] }   (built from cloud, mixed across lists)
+    bloomDates: [],    // derived from days (private tasks only — shared lists don't bloom)
     selectedDate: todayStr(),  // always land on today; navigation within session is fine but a fresh load should jump to today
     weekAnchor:   todayStr(),
     streak: 0,
@@ -551,6 +570,9 @@ function load() {
     filter:   ui.filter   || 'all',
     category: ui.category || 'todo',
     calView:  ui.calView  || 'week',
+    // Shared-list state — currentListId null = personal list (default landing)
+    currentListId: null,
+    lists: [],         // [{id, name, created_by, member_count}]  populated by loadLists()
   };
 }
 function save() {
@@ -609,6 +631,51 @@ async function cloudDeleteWhere(filter) {
   });
 }
 
+// ---------- Lists (shared) ----------
+async function loadLists() {
+  if (!session) return;
+  const r = await safeRun('lists-fetch', () => sb.from('lists').select('id, name, created_by'));
+  if (r?.error) return;
+  // Member counts come from a separate query so we don't need a view; cheap because lists are few
+  const ids = (r.data || []).map(l => l.id);
+  let counts = new Map();
+  if (ids.length) {
+    const m = await safeRun('list-members-fetch', () => sb.from('list_members').select('list_id').in('list_id', ids));
+    if (!m?.error && m.data) {
+      for (const row of m.data) counts.set(row.list_id, (counts.get(row.list_id) || 0) + 1);
+    }
+  }
+  state.lists = (r.data || []).map(l => ({ ...l, member_count: counts.get(l.id) || 1 }));
+  renderListSwitcher();
+}
+async function cloudCreateList(name) {
+  const r = await safeRun('list-create', () => sb.rpc('create_list', { _name: name }));
+  if (r?.error) return null;
+  await loadLists();
+  return r.data; // new list_id
+}
+async function cloudCreateInvite(listId) {
+  const r = await safeRun('invite-create', () => sb.from('list_invites')
+    .insert({ list_id: listId, created_by: session.user.id })
+    .select('token')
+    .single());
+  if (r?.error) return null;
+  return r.data.token;
+}
+async function cloudRedeemInvite(token) {
+  const r = await safeRun('invite-redeem', () => sb.rpc('redeem_list_invite', { _token: token }));
+  if (r?.error) return null;
+  await loadLists();
+  return r.data; // joined list_id
+}
+async function cloudLeaveList(listId) {
+  const r = await safeRun('list-leave', () => sb.from('list_members').delete()
+    .eq('list_id', listId).eq('user_id', session.user.id));
+  if (r?.error) return false;
+  await loadLists();
+  return true;
+}
+
 // Tasks that have a local mutation in flight — protect them from being
 // stomped by a poll that hasn't yet seen our write
 const pendingIds = new Set();
@@ -630,9 +697,9 @@ async function loadFromCloud() {
     for (const s of seeds) {
       const id = crypto.randomUUID();
       const day = getDay(td);
-      day.tasks.unshift({ id, text: s.text, done: false, createdAt: Date.now(), doneAt: null, category: s.category });
+      day.tasks.unshift({ id, text: s.text, done: false, createdAt: Date.now(), doneAt: null, category: s.category, listId: null, userId: session.user.id });
       pendingIds.add(id);
-      cloudInsert({ id, user_id: session.user.id, date: td, text: s.text, category: s.category, sort_key: Date.now() })
+      cloudInsert({ id, user_id: session.user.id, date: td, text: s.text, category: s.category, sort_key: Date.now(), list_id: null })
         .finally(() => pendingIds.delete(id));
     }
     renderAll();
@@ -652,8 +719,10 @@ async function syncFromCloud(initial = false) {
   console.log('[bloomlist] sync start', { initial, ts: new Date().toISOString() });
   let data, error;
   try {
+    // RLS handles visibility (own tasks + tasks in lists you're a member of). Don't add a
+    // user_id filter here — that would hide shared-list rows other members created.
     ({ data, error } = await withTimeout(
-      sb.from('tasks').select('*').eq('user_id', session.user.id),
+      sb.from('tasks').select('*'),
       SYNC_TIMEOUT_MS,
       'select tasks',
     ));
@@ -681,6 +750,8 @@ async function syncFromCloud(initial = false) {
         t.doneAt   = sr.done_at ? new Date(sr.done_at).getTime() : null;
         t.category = sr.category;
         t.createdAt = sr.sort_key;
+        t.listId    = sr.list_id || null;
+        t.userId    = sr.user_id;
         serverById.delete(t.id);
         return true;
       }
@@ -695,6 +766,8 @@ async function syncFromCloud(initial = false) {
       id, text: sr.text, done: sr.done,
       doneAt: sr.done_at ? new Date(sr.done_at).getTime() : null,
       createdAt: sr.sort_key, category: sr.category,
+      listId: sr.list_id || null,
+      userId: sr.user_id,
     });
   }
 
@@ -738,13 +811,15 @@ setInterval(updateSyncIndicator, 1000);
 
 // Expose a console diagnostic so we can introspect from the field
 window.bloomlistDiagnose = () => ({
-  build: 'v10.3',
+  build: 'v11.0',
   session: session ? { user_id: session.user.id, email: session.user.email, expires_at: session.expires_at } : null,
   state_days: Object.fromEntries(Object.entries(state.days).map(([d, v]) => [d, v.tasks.length])),
   pending: [...pendingIds],
   lastSyncTs: lastSyncTs ? new Date(lastSyncTs).toISOString() : null,
   lastSyncError,
   pollTimerActive: !!pollTimer,
+  currentListId: state.currentListId,
+  lists: state.lists.map(l => ({ id: l.id, name: l.name, members: l.member_count })),
   now: new Date().toISOString(),
 });
 // One-shot manual probe to test if a single SELECT round-trips at all
@@ -899,7 +974,9 @@ function getDay(date) {
   return state.days[date];
 }
 function dayStats(date) {
-  const tasks = state.days[date]?.tasks || [];
+  // Plant/bloom/streak/calendar are personal-list concepts only — shared list activity
+  // never affects your flower. Filter to private tasks (listId null).
+  const tasks = (state.days[date]?.tasks || []).filter(t => (t.listId || null) === null);
   const total = tasks.length;
   const done  = tasks.filter(t => t.done).length;
   const pct   = total === 0 ? 0 : (done / total);
@@ -1416,14 +1493,36 @@ function renderPlant() {
   }
 }
 
+// Tasks belong to a list (currentListId) — null means "personal." Shared lists are flat
+// (no date or category) so the visible set is computed differently for each mode.
+function tasksForCurrentView() {
+  if (state.currentListId === null) {
+    // Personal: only private tasks for the selected date
+    const day = getDay(state.selectedDate);
+    return day.tasks.filter(t => (t.listId || null) === null);
+  }
+  // Shared: every task belonging to this list across all dates, flattened
+  const all = [];
+  for (const date in state.days) {
+    for (const t of state.days[date].tasks) {
+      if (t.listId === state.currentListId) all.push(t);
+    }
+  }
+  return all;
+}
+
 function renderTasks() {
-  const day = getDay(state.selectedDate);
-  const allDayTasks = day.tasks.slice();
-  // category-scoped
-  const catTasks = allDayTasks.filter(t => t.category === state.category).sort((a, b) => {
-    if (a.done !== b.done) return a.done ? 1 : -1;
-    return b.createdAt - a.createdAt;
-  });
+  const isPrivate = state.currentListId === null;
+  const baseTasks = tasksForCurrentView();
+
+  // In personal mode, also apply category filter; shared lists have no categories.
+  const catTasks = (isPrivate
+      ? baseTasks.filter(t => t.category === state.category)
+      : baseTasks
+    ).sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return b.createdAt - a.createdAt;
+    });
   let view = catTasks;
   if (state.filter === 'active') view = view.filter(t => !t.done);
   if (state.filter === 'done')   view = view.filter(t => t.done);
@@ -1432,26 +1531,43 @@ function renderTasks() {
   const empty = document.getElementById('emptyState');
   list.innerHTML = '';
 
-  // Update placeholder & tab counts
-  document.getElementById('taskInput').placeholder = state.category === 'school'
-    ? 'add a class, assignment, or study session 📚'
-    : "what's on your heart for this day, love? 🩷";
-  document.getElementById('catCountTodo').textContent   = allDayTasks.filter(t => t.category === 'todo').length;
-  document.getElementById('catCountSchool').textContent = allDayTasks.filter(t => t.category === 'school').length;
-  document.querySelectorAll('[data-cat]').forEach(b => b.classList.toggle('active', b.dataset.cat === state.category));
+  // Placeholder + category UI only matters in personal mode
+  if (isPrivate) {
+    document.getElementById('taskInput').placeholder = state.category === 'school'
+      ? 'add a class, assignment, or study session 📚'
+      : "what's on your heart for this day, love? 🩷";
+    const allDay = getDay(state.selectedDate).tasks.filter(t => (t.listId || null) === null);
+    document.getElementById('catCountTodo').textContent   = allDay.filter(t => t.category === 'todo').length;
+    document.getElementById('catCountSchool').textContent = allDay.filter(t => t.category === 'school').length;
+    document.querySelectorAll('[data-cat]').forEach(b => b.classList.toggle('active', b.dataset.cat === state.category));
+  } else {
+    const listObj = state.lists.find(l => l.id === state.currentListId);
+    const listName = listObj?.name || 'list';
+    document.getElementById('taskInput').placeholder = `add to ${listName}…`;
+  }
 
   if (view.length === 0) {
     empty.classList.remove('hidden');
     empty.classList.add('flex');
-    const catLabel = state.category === 'school' ? 'school tasks' : 'to-do tasks';
-    if (catTasks.length === 0) {
-      document.getElementById('emptyTitle').textContent = `no ${catLabel} yet 🌸`;
-      document.getElementById('emptyBody').textContent  = state.category === 'school'
-        ? 'add an assignment, lecture, or quiz prep above'
-        : 'add one above to plant a seed for this day';
+    if (isPrivate) {
+      const catLabel = state.category === 'school' ? 'school tasks' : 'to-do tasks';
+      if (catTasks.length === 0) {
+        document.getElementById('emptyTitle').textContent = `no ${catLabel} yet 🌸`;
+        document.getElementById('emptyBody').textContent  = state.category === 'school'
+          ? 'add an assignment, lecture, or quiz prep above'
+          : 'add one above to plant a seed for this day';
+      } else {
+        document.getElementById('emptyTitle').textContent = 'nothing here in this filter';
+        document.getElementById('emptyBody').textContent  = 'try switching filter pills above';
+      }
     } else {
-      document.getElementById('emptyTitle').textContent = 'nothing here in this filter';
-      document.getElementById('emptyBody').textContent  = 'try switching filter pills above';
+      if (catTasks.length === 0) {
+        document.getElementById('emptyTitle').textContent = 'this list is empty 🛒';
+        document.getElementById('emptyBody').textContent  = 'add the first item above — anyone in the list can check it off';
+      } else {
+        document.getElementById('emptyTitle').textContent = 'nothing here in this filter';
+        document.getElementById('emptyBody').textContent  = 'try switching filter pills above';
+      }
     }
   } else {
     empty.classList.add('hidden');
@@ -1516,8 +1632,75 @@ function renderMute() {
   document.getElementById('soundOff').classList.toggle('hidden', !state.muted);
 }
 function renderAll() {
+  applyListMode();
   renderWeek(); renderMonth(); applyCalView(); updateMonthLabel();
   renderPlant(); renderTasks(); renderGarden(); renderStats(); renderFilters(); renderMute();
+  renderListSwitcher();
+}
+
+// Toggle the parts of the UI that only make sense on the personal list. Calendar, plant,
+// category tabs, and the "copy yesterday" affordance are all date- or me-centric — they
+// disappear on shared lists, leaving a flat list view.
+function applyListMode() {
+  const isPrivate = state.currentListId === null;
+  const setHidden = (id, hidden) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', hidden);
+  };
+  setHidden('calendarSection', !isPrivate);
+  setHidden('plantCard',       !isPrivate);
+  setHidden('categoryTabs',    !isPrivate);
+  setHidden('copyYesterday',   !isPrivate);
+  // When the plant card is hidden, the tasks card should fill the row width.
+  const tasksCard = document.getElementById('tasksCard');
+  if (tasksCard) {
+    tasksCard.classList.toggle('lg:col-span-3', isPrivate);
+    tasksCard.classList.toggle('lg:col-span-5', !isPrivate);
+  }
+  // Share + leave buttons are only meaningful on a shared list.
+  setHidden('shareListBtn', isPrivate);
+  setHidden('leaveListBtn', isPrivate);
+}
+
+function renderListSwitcher() {
+  const wrap = document.getElementById('listSwitcherWrap');
+  if (!wrap) return;
+  if (!session) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+
+  const isPrivate = state.currentListId === null;
+  const current = isPrivate ? null : state.lists.find(l => l.id === state.currentListId);
+  document.getElementById('listSwitcherIcon').textContent = isPrivate ? '🌷' : '🛒';
+  document.getElementById('listSwitcherName').textContent = isPrivate ? 'personal' : (current?.name || 'list');
+  const membersEl = document.getElementById('listSwitcherMembers');
+  if (!isPrivate && current) {
+    membersEl.textContent = current.member_count === 1 ? 'just you' : `${current.member_count} people`;
+    membersEl.classList.remove('hidden');
+  } else {
+    membersEl.classList.add('hidden');
+  }
+
+  // Build the dropdown menu (rebuild on every render — cheap, small, always-in-sync)
+  const menu = document.getElementById('listSwitcherMenu');
+  const rowHTML = (icon, label, sublabel, isActive, dataAttrs) => `
+    <button class="w-full flex items-center gap-3 p-2 rounded-xl ${isActive ? 'bg-blush-100' : 'hover:bg-blush-50'} transition-colors text-left" ${dataAttrs}>
+      <span class="text-lg">${icon}</span>
+      <span class="flex-1">
+        <span class="block text-sm font-semibold text-blush-800">${escapeHtml(label)}</span>
+        ${sublabel ? `<span class="block text-[11px] text-blush-500">${escapeHtml(sublabel)}</span>` : ''}
+      </span>
+      ${isActive ? '<span class="text-blush-500 text-xs">●</span>' : ''}
+    </button>
+  `;
+  let html = rowHTML('🌷', 'personal', 'your private flower garden', isPrivate, 'data-pick-list="null"');
+  for (const l of state.lists) {
+    html += rowHTML('🛒', l.name, l.member_count === 1 ? 'just you' : `${l.member_count} people`, l.id === state.currentListId, `data-pick-list="${l.id}"`);
+  }
+  html += `<div class="my-1 border-t border-blush-200/60"></div>`;
+  html += `<button class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-blush-50 transition-colors text-left text-blush-700 font-semibold text-sm" data-pick-list="__new__">
+    <span class="text-lg">＋</span><span>new shared list…</span>
+  </button>`;
+  menu.innerHTML = html;
 }
 
 function escapeHtml(s) {
@@ -1534,9 +1717,11 @@ function addTask(text) {
   const day = getDay(state.selectedDate);
   const id = crypto.randomUUID();
   const now = Date.now();
+  const listId = state.currentListId; // null on private list, uuid on shared
   day.tasks.unshift({
     id, text, done: false, createdAt: now, doneAt: null,
     category: state.category,
+    listId, userId: session.user.id,
   });
   pluck();
   save(); renderTasks(); renderPlant(); renderWeek();
@@ -1546,6 +1731,7 @@ function addTask(text) {
     date: state.selectedDate,
     text, category: state.category,
     sort_key: now,
+    list_id: listId,
   }).finally(() => pendingIds.delete(id));
 }
 
@@ -1575,12 +1761,23 @@ function recomputeStreak() {
   if (count > state.bestStreak) state.bestStreak = count;
 }
 
-function toggleTask(id, btnEl) {
-  const day = getDay(state.selectedDate);
-  const t = day.tasks.find(x => x.id === id);
-  if (!t || !session) return;
+// Shared-list tasks live across many dates, so we can't assume task.id is in state.days[selectedDate].
+// Walk all days; cheap because state.days is small.
+function findTaskById(id) {
+  for (const date in state.days) {
+    const t = state.days[date].tasks.find(x => x.id === id);
+    if (t) return { task: t, date };
+  }
+  return { task: null, date: null };
+}
 
-  const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
+function toggleTask(id, btnEl) {
+  if (!session) return;
+  const { task: t, date: taskDate } = findTaskById(id);
+  if (!t) return;
+  const isPrivate = (t.listId || null) === null;
+
+  const wasFull = isPrivate && dayStats(taskDate).pct === 1 && dayStats(taskDate).total > 0;
 
   t.done = !t.done;
   t.doneAt = t.done ? Date.now() : null;
@@ -1588,8 +1785,8 @@ function toggleTask(id, btnEl) {
   cloudUpdate(id, { done: t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null })
     .finally(() => pendingIds.delete(id));
 
-  const stats = dayStats(state.selectedDate);
-  const isFull = stats.pct === 1 && stats.total > 0;
+  const stats = isPrivate ? dayStats(taskDate) : null;
+  const isFull = isPrivate && stats.pct === 1 && stats.total > 0;
 
   if (t.done) {
     chime();
@@ -1600,59 +1797,86 @@ function toggleTask(id, btnEl) {
       spawnSparkles(r.left + r.width/2, r.top + r.height/2, 14);
     }
     const msg = PRAISE[Math.floor(Math.random() * PRAISE.length)];
-    toast(msg, `${stats.done} of ${stats.total} done`);
+    if (isPrivate) toast(msg, `${stats.done} of ${stats.total} done`);
+    else           toast('checked off ✨', '');
   } else {
     pluck();
   }
 
-  // Bloom transition
-  if (!wasFull && isFull) {
-    if (!state.bloomDates.includes(state.selectedDate)) state.bloomDates.push(state.selectedDate);
-    fanfare();
-    const plantBox = document.getElementById('plantSvg').getBoundingClientRect();
-    spawnHeartBurst(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 16);
-    spawnSparkles(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 36);
-    setTimeout(() => toast('Full bloom! 🌷', 'a flower joins your garden'), 200);
-  } else if (wasFull && !isFull) {
-    state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+  // Bloom transitions are personal-list only; shared-list checks never affect your flower.
+  if (isPrivate) {
+    if (!wasFull && isFull) {
+      if (!state.bloomDates.includes(taskDate)) state.bloomDates.push(taskDate);
+      fanfare();
+      const plantEl = document.getElementById('plantSvg');
+      if (plantEl) {
+        const plantBox = plantEl.getBoundingClientRect();
+        spawnHeartBurst(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 16);
+        spawnSparkles(plantBox.left + plantBox.width/2, plantBox.top + plantBox.height/2, 36);
+      }
+      setTimeout(() => toast('Full bloom! 🌷', 'a flower joins your garden'), 200);
+    } else if (wasFull && !isFull) {
+      state.bloomDates = state.bloomDates.filter(x => x !== taskDate);
+    }
+    recomputeStreak();
   }
-  recomputeStreak();
   save(); renderAll();
 }
 
 function deleteTask(id) {
   if (!session) return;
-  const day = getDay(state.selectedDate);
-  const wasFull = dayStats(state.selectedDate).pct === 1 && day.tasks.length > 0;
-  day.tasks = day.tasks.filter(t => t.id !== id);
+  const { task: t, date: taskDate } = findTaskById(id);
+  if (!t) return;
+  const isPrivate = (t.listId || null) === null;
+  const wasFull = isPrivate && dayStats(taskDate).pct === 1 && dayStats(taskDate).total > 0;
+
+  state.days[taskDate].tasks = state.days[taskDate].tasks.filter(x => x.id !== id);
   pendingIds.add(id);
   cloudDelete(id).finally(() => pendingIds.delete(id));
-  const stats = dayStats(state.selectedDate);
-  const isFull = stats.pct === 1 && stats.total > 0;
-  if (!wasFull && isFull) {
-    if (!state.bloomDates.includes(state.selectedDate)) state.bloomDates.push(state.selectedDate);
-  } else if (wasFull && !isFull) {
-    state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+
+  if (isPrivate) {
+    const stats = dayStats(taskDate);
+    const isFull = stats.pct === 1 && stats.total > 0;
+    if (!wasFull && isFull) {
+      if (!state.bloomDates.includes(taskDate)) state.bloomDates.push(taskDate);
+    } else if (wasFull && !isFull) {
+      state.bloomDates = state.bloomDates.filter(x => x !== taskDate);
+    }
+    recomputeStreak();
   }
-  recomputeStreak();
   save(); renderAll();
 }
 
 function clearDone() {
   if (!session) return;
-  const day = getDay(state.selectedDate);
-  const toDelete = day.tasks.filter(t => t.done && t.category === state.category);
-  if (toDelete.length === 0) return;
-  day.tasks = day.tasks.filter(t => !(t.done && t.category === state.category));
-  for (const t of toDelete) {
-    pendingIds.add(t.id);
-    cloudDelete(t.id).finally(() => pendingIds.delete(t.id));
+  // Scope to currently-visible tasks (private+today+category, OR shared-list-flat).
+  const isPrivate = state.currentListId === null;
+  const targets = [];
+  for (const date in state.days) {
+    for (const t of state.days[date].tasks) {
+      if (!t.done) continue;
+      if (isPrivate) {
+        if ((t.listId || null) !== null) continue;
+        if (date !== state.selectedDate) continue;
+        if (t.category !== state.category) continue;
+      } else {
+        if (t.listId !== state.currentListId) continue;
+      }
+      targets.push({ id: t.id, date });
+    }
+  }
+  if (targets.length === 0) return;
+  for (const { id, date } of targets) {
+    state.days[date].tasks = state.days[date].tasks.filter(t => t.id !== id);
+    pendingIds.add(id);
+    cloudDelete(id).finally(() => pendingIds.delete(id));
   }
   pluck();
-  // clearing done can only reduce completion; if was full and we just removed all done ones, total now equals undone count, possibly still 0% bloom
-  const stats = dayStats(state.selectedDate);
-  if (stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
-  recomputeStreak();
+  if (isPrivate) {
+    const stats = dayStats(state.selectedDate);
+    if (stats.pct < 1) state.bloomDates = state.bloomDates.filter(x => x !== state.selectedDate);
+    recomputeStreak();
+  }
   save(); renderAll();
 }
 
@@ -1771,6 +1995,109 @@ document.getElementById('muteBtn').addEventListener('click', () => {
   if (!state.muted) pluck();
   save(); renderMute();
 });
+
+/* ============================================================
+   List switcher / sharing
+   ============================================================ */
+const listSwitcherBtn  = document.getElementById('listSwitcherBtn');
+const listSwitcherMenu = document.getElementById('listSwitcherMenu');
+
+listSwitcherBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  listSwitcherMenu.classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  if (!listSwitcherMenu.contains(e.target) && e.target !== listSwitcherBtn) {
+    listSwitcherMenu.classList.add('hidden');
+  }
+});
+listSwitcherMenu.addEventListener('click', async e => {
+  const btn = e.target.closest('[data-pick-list]');
+  if (!btn) return;
+  const val = btn.dataset.pickList;
+  listSwitcherMenu.classList.add('hidden');
+
+  if (val === '__new__') {
+    const name = prompt('Name your shared list (e.g. "Groceries", "Trip to Tahoe")');
+    if (!name || !name.trim()) return;
+    const newId = await cloudCreateList(name.trim());
+    if (!newId) return;
+    state.currentListId = newId;
+    renderAll();
+    // Offer to share immediately
+    setTimeout(() => shareCurrentList(), 200);
+    return;
+  }
+  state.currentListId = val === 'null' ? null : val;
+  // selectedDate is mostly cosmetic on shared lists (they're flat), but new shared tasks
+  // still need a valid date — default to today for both modes on switch.
+  state.selectedDate = todayStr();
+  state.weekAnchor   = todayStr();
+  renderAll();
+});
+
+async function shareCurrentList() {
+  if (!state.currentListId) return;
+  const token = await cloudCreateInvite(state.currentListId);
+  if (!token) return;
+  const url = `${location.origin}${location.pathname}?join=${token}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('Link copied 🔗', 'paste it to invite someone — expires in 30 days');
+  } catch {
+    // clipboard blocked (e.g. iOS without user gesture context) — show the URL so they can copy manually
+    prompt('Copy this invite link:', url);
+  }
+}
+document.getElementById('shareListBtn').addEventListener('click', shareCurrentList);
+
+document.getElementById('leaveListBtn').addEventListener('click', async () => {
+  if (!state.currentListId) return;
+  const list = state.lists.find(l => l.id === state.currentListId);
+  if (!confirm(`Leave "${list?.name || 'this list'}"? You won't see its tasks anymore.`)) return;
+  const ok = await cloudLeaveList(state.currentListId);
+  if (!ok) return;
+  state.currentListId = null;
+  state.selectedDate = todayStr();
+  await syncFromCloud();
+  renderAll();
+});
+
+// Redeem ?join=<token> from the URL after the user is signed in. Works whether the user
+// arrived already-signed-in or had to sign up first (we stash the token in localStorage
+// in the latter case and pick it up after auth state lands).
+async function consumePendingInviteIfAny() {
+  if (!session) return;
+  let token = null;
+  try {
+    const url = new URL(location.href);
+    token = url.searchParams.get('join');
+    if (token) {
+      // Strip ?join=... from the address bar so a refresh doesn't re-redeem
+      url.searchParams.delete('join');
+      history.replaceState(null, '', url.toString());
+    }
+  } catch {}
+  token = token || localStorage.getItem('bloomlist:pending_join');
+  if (!token) return;
+  localStorage.removeItem('bloomlist:pending_join');
+
+  const joinedId = await cloudRedeemInvite(token);
+  if (!joinedId) return;
+  state.currentListId = joinedId;
+  await syncFromCloud();
+  renderAll();
+  toast('Joined the list 🌷', 'changes here sync to everyone in real time');
+}
+
+// Stash an unredeemed token before sign-in so it survives the sign-in round trip.
+(function captureJoinTokenPreAuth() {
+  try {
+    const url = new URL(location.href);
+    const token = url.searchParams.get('join');
+    if (token) localStorage.setItem('bloomlist:pending_join', token);
+  } catch {}
+})();
 
 /* ============================================================
    Interactive flower
@@ -1926,7 +2253,12 @@ function bootSyncedSession(s) {
   showApp();
   updateGreeting();
   startPolling();        // start the recovery loop FIRST so a hung initial sync is recoverable
-  loadFromCloud().catch(e => reportCloudError('bootstrap', e));
+  // Order: tasks first (so we have data on screen ASAP), then lists for the switcher,
+  // then redeem any pending invite. Each step's failure is handled inside safeRun/loadLists.
+  loadFromCloud()
+    .then(() => loadLists())
+    .then(() => consumePendingInviteIfAny())
+    .catch(e => reportCloudError('bootstrap', e));
   subscribeRealtime();
 }
 sb.auth.onAuthStateChange((event, s) => {
@@ -1938,6 +2270,7 @@ sb.auth.onAuthStateChange((event, s) => {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     session = null;
     state.days = {}; state.bloomDates = []; state.streak = 0;
+    state.lists = []; state.currentListId = null;
     localStorage.removeItem('bloomlist:seeded');
     updateGreeting();
     renderAll();
